@@ -26,6 +26,7 @@
 #include "torch-cpu-rng.h"
 #include "vae.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <optional>
@@ -60,10 +61,12 @@ struct Yue2Pipeline {
     Yue2PipelineParams params;
     DebugDumper        dumper;
 
-    // The cache, bound at configure to its config with the context override
-    // and to the shared backend, held for the process lifetime
+    // The cache, bound at configure to its config and to the shared backend,
+    // held for the process lifetime. Each stage sizes it to what the request
+    // needs, never past context: the model context or the max_seq override.
     Qw3lmKvCache kv;
     BackendPair  kv_backend;
+    int          context    = 0;
     bool         configured = false;
 };
 
@@ -138,6 +141,7 @@ static bool pipeline_configure(Yue2Pipeline *             p,
     if (params.max_seq > 0) {
         cfg.max_seq_len = params.max_seq;
     }
+    p->context    = cfg.max_seq_len;
     p->kv_backend = backend_init("KV");
     qw3lm_kv_init(&p->kv, cfg, p->kv_backend.backend);
     p->configured = true;
@@ -207,6 +211,14 @@ static bool pipeline_transcribe(Yue2Pipeline * p,
     }
     ModelHandle hold(p->store, m);
     return ss2_transcribe(m, audio, n_samples, melody_only, abc, error, &p->dumper);
+}
+
+// Size the cache for a stage that prefills from position 0. The capacity is
+// padded like the attention window, so every padded read spans what it did
+// over the full context and the output does not change.
+static void pipeline_kv_capacity(Yue2Pipeline * p, int need) {
+    int padded = (int) GGML_PAD(need, 256);
+    qw3lm_kv_capacity(&p->kv, padded < p->context ? padded : p->context);
 }
 
 // The cache of one generate: the stages grow it to the sets they need, a
@@ -288,9 +300,10 @@ static bool pipeline_generate(Yue2Pipeline *          p,
         std::vector<Yue2Generation> plans;
         Yue2Sampling score_sampling = r.abc_sampling;
         // Leave room for the score terminator and a usable performance prefix.
-        score_sampling.max_tokens = std::min(score_sampling.max_tokens, p->kv.cfg.max_seq_len - (int) open.size() - 4);
+        score_sampling.max_tokens = std::min(score_sampling.max_tokens, p->context - (int) open.size() - 4);
         if (score_sampling.max_tokens < 1) return false;
         score_sampling.min_tokens = std::min(score_sampling.min_tokens, score_sampling.max_tokens - 1);
+        pipeline_kv_capacity(p, (int) open.size() + score_sampling.max_tokens + 1);
         if (!yue2_generate(lm, &p->kv, std::vector<std::vector<int>>(B, open), {}, 1.0f, score_sampling, r.lm_seed,
                            YUE2_PHASE_ABC, &plans, cancelled, cancel_data,
                            [p](int done,int total){if(p->progress)p->progress("Composing score",done,total);})) {
@@ -385,6 +398,7 @@ static bool pipeline_generate(Yue2Pipeline *          p,
         }
         codes[0].truncated = false;
         fprintf(stderr, "[Pipeline] Replay: %zu frames supplied\n", codes[0].tokens.size());
+        pipeline_kv_capacity(p, (int) prefixes[0].size() + 2 * (int) values.size() + 3);
     } else {
         if(p->progress) p->progress("Composing performance",0,0);
         // A word-count estimate is not an audio boundary. Auto must retain the
@@ -403,7 +417,7 @@ static bool pipeline_generate(Yue2Pipeline *          p,
                 fprintf(stderr, "[Pipeline] Auto duration: lyric estimate %.0f s, ceiling %.0f s\n", estimate, ceiling);
             }
         }
-        performance_limit = song_limit_reason(ceiling, semantic.max_tokens, p->kv.cfg.max_seq_len, longest);
+        performance_limit = song_limit_reason(ceiling, semantic.max_tokens, p->context, longest);
         if (r.duration <= 0.0f && ceiling > 0.0f) {
             const std::string manual = "the selected duration limit";
             const size_t at = performance_limit.find(manual);
@@ -411,7 +425,7 @@ static bool pipeline_generate(Yue2Pipeline *          p,
                 performance_limit.replace(at, manual.size(), "Auto duration's lyric-fit ceiling (" +
                                           std::to_string((int) ceiling) + " s)");
         }
-        semantic.max_tokens = song_frame_budget(ceiling, semantic.max_tokens, p->kv.cfg.max_seq_len, longest);
+        semantic.max_tokens = song_frame_budget(ceiling, semantic.max_tokens, p->context, longest);
         if (semantic.max_tokens < 1) {
             fprintf(stderr, "[Pipeline] FATAL: no context remains for the performance\n");
             return false;
@@ -420,6 +434,20 @@ static bool pipeline_generate(Yue2Pipeline *          p,
         fprintf(stderr, "[Pipeline] %s: natural end token enabled; ceiling %d frames (%.1f s)\n",
                 r.duration <= 0.0f ? "Auto duration" : "Duration limit", semantic.max_tokens,
                 (double) semantic.max_tokens / YUE2_FRAME_RATE);
+        // The sets outlive the stage: a song that fits takes its acoustic
+        // chunk whole, the prefix, its frames twice over and three markers
+        // (per-stage KV sizing, timoncool/yue2.cpp 61cd731)
+        int need = 0;
+        for (int i = 0; i < B; i++) {
+            int longest_i = (int) prefixes[i].size();
+            if (!negatives.empty() && (int) negatives[i].size() > longest_i) {
+                longest_i = (int) negatives[i].size();
+            }
+            int semantic_need = longest_i + semantic.max_tokens + 1;
+            int acoustic_need = (int) prefixes[i].size() + 2 * semantic.max_tokens + 3;
+            need              = std::max(need, std::max(semantic_need, acoustic_need));
+        }
+        pipeline_kv_capacity(p, need);
         if (!yue2_generate(lm, &p->kv, prefixes, negatives, guidance, semantic, r.lm_seed, YUE2_PHASE_SEMANTIC, &codes,
                            cancelled, cancel_data, [p](int done,int total){if(p->progress)p->progress("Composing performance",done,total);})) {
             return false;
