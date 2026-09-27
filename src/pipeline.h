@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 // pipeline.h: YuE2 generation pipeline
 //
 // Turns one request into tracks: a symbolic plan, a semantic token stream,
@@ -49,6 +50,7 @@ struct Yue2PipelineParams {
 };
 
 struct Yue2Pipeline {
+    std::function<void(const char *, int, int)> progress;
     ModelStore *       store = nullptr;   // borrowed, owned by the tool
     std::string        model_path;        // the backbone GGUF, both halves and the tokenizer
     std::string        vae_path;
@@ -277,6 +279,7 @@ static bool pipeline_generate(Yue2Pipeline *          p,
         abc_ids.assign(B, encode(r.abc));
         scores.assign(B, r.abc);
     } else if (has_score) {
+        if(p->progress) p->progress("Composing score",0,0);
         std::vector<int>            open = yue2_build_prompt_ids(encode, cot, r.style, r.lyrics, nullptr);
         std::vector<Yue2Generation> plans;
         if (!yue2_generate(lm, &p->kv, std::vector<std::vector<int>>(B, open), {}, 1.0f, r.abc_sampling, r.lm_seed,
@@ -318,6 +321,7 @@ static bool pipeline_generate(Yue2Pipeline *          p,
         codes[0].truncated = false;
         fprintf(stderr, "[Pipeline] Replay: %zu frames supplied\n", codes[0].tokens.size());
     } else {
+        if(p->progress) p->progress("Composing performance",0,0);
         float duration = r.duration;
         if (duration <= 0.0f) {
             duration = yue2_estimate_duration_from_lyrics(r.lyrics);
@@ -412,10 +416,12 @@ static bool pipeline_generate(Yue2Pipeline *          p,
         const int chunk_size = chunk_sizes[i];
         const int T_lat      = (int) codes[i].tokens.size();
         int       chunks     = (T_lat + chunk_size - 1) / chunk_size;
+        if(p->progress) p->progress("Rendering audio",i,B);
         fprintf(stderr, "[NAR] Song %d: %d frames (%.1f s), prefix %d, %d chunk%s of %d, %d variation%s\n", i, T_lat,
                 (float) T_lat / (float) YUE2_FRAME_RATE, prefix_len, chunks, chunks > 1 ? "s" : "", chunk_size, M,
                 M > 1 ? "s" : "");
         for (int start = 0; start < T_lat; start += chunk_size) {
+            if(p->progress) p->progress("Rendering audio chunks",start/chunk_size,chunks);
             Timer chunk_timer;
             int   frames = T_lat - start < chunk_size ? T_lat - start : chunk_size;
             int   ar_len = prefix_len + frames + 1;
@@ -477,6 +483,7 @@ static bool pipeline_generate(Yue2Pipeline *          p,
     }
 
     nar_hold.reset();
+    if(p->progress) p->progress("Decoding audio",0,0);
     VAEGGML * vae = require_vae(p);
     if (!vae) {
         return false;

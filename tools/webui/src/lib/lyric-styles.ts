@@ -24,6 +24,10 @@ export const LYRIC_STYLE_CHOICES: ReadonlyArray<readonly [string, string]> = [
 	...LYRIC_PACK_STYLES.map(style => [style.id, style.name] as const), ...LEGACY_LYRIC_CHOICES
 ];
 
+// id -> display name across packs and legacy engines. Unknown ids fall back
+// to the raw id at the call site.
+export const LYRIC_STYLE_BY_ID: Record<string, string> = Object.fromEntries(LYRIC_STYLE_CHOICES);
+
 export function lyricStyleInstructions(id: string): string {
 	const profile = LYRIC_PACK_STYLES.find(style => style.id === id);
 	if (profile) return profile.instructions;

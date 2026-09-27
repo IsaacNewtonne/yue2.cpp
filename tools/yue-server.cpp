@@ -12,12 +12,16 @@
 #include "audio-io.h"
 #include "audio-master.h"
 #include "audio-vocal-balance.h"
+#include "audio-video.h"
 #include "httplib.h"
 #include "index.html.gz.hpp"
 #include "pipeline.h"
 #include "version.h"
 #include "yyjson.h"
 #include "comfy-api.h"
+#include "youtube-api.h"
+#include "saved-presets.h"
+#include "job-archive.h"
 
 #include <atomic>
 #include <chrono>
@@ -163,6 +167,7 @@ enum class JobStatus : int {
     DONE      = 1,
     FAILED    = 2,
     CANCELLED = 3,
+    INTERRUPTED = 4,
 };
 
 struct Job {
@@ -171,6 +176,13 @@ struct Job {
     std::string            result_body;
     std::string            result_mime;
     std::atomic<bool>      cancel{ false };
+    std::atomic<bool>      durable{ false };
+    std::atomic<bool> started{false};
+    std::string kind = "generation";
+    std::mutex progress_mutex;
+    std::string stage = "Queued";
+    int stage_done=0, stage_total=0;
+    std::chrono::steady_clock::time_point stage_start=std::chrono::steady_clock::now();
 
     // memory ordering contract: result_body and result_mime are written
     // before status is stored (seq_cst). the client loads status (seq_cst)
@@ -182,6 +194,13 @@ static std::mutex                                            mtx_jobs;
 static std::unordered_map<std::string, std::shared_ptr<Job>> g_jobs;
 static std::deque<std::string>                               g_job_order;
 static const int                                             MAX_JOBS = 32;
+
+static void job_finish(const std::shared_ptr<Job> & job, JobStatus status) {
+    try { job_archive::finish(job->id, (int)status, job->result_mime, job->result_body); job->durable.store(true); }
+    catch (const std::exception & error) { fprintf(stderr, "[ERROR] Job %s is memory-only: %s\n", job->id.c_str(), error.what()); }
+    job->status.store(status);
+    if(job->durable.load()) { std::lock_guard<std::mutex> lock(mtx_jobs); g_jobs.erase(job->id); g_job_order.erase(std::remove(g_job_order.begin(),g_job_order.end(),job->id),g_job_order.end()); }
+}
 
 // job currently on the GPU, tracked so shutdown can cancel it and return
 // within one pipeline cancel poll instead of waiting out the generation.
@@ -217,8 +236,17 @@ static std::string job_make_id() {
     return buf;
 }
 
-static std::shared_ptr<Job> job_create() {
+static std::shared_ptr<Job> job_create(const std::string & requested_id = "", bool * created = nullptr) {
     std::lock_guard<std::mutex> lock(mtx_jobs);
+    if (created) *created = false;
+    if (!requested_id.empty()) {
+        auto existing = g_jobs.find(requested_id);
+        if (existing != g_jobs.end()) return existing->second;
+        auto archived = std::make_shared<Job>(); int status = 0;
+        if (job_archive::read(requested_id,status,archived->result_mime,archived->result_body,false)) {
+            archived->id = requested_id; archived->status.store((JobStatus)status); archived->durable.store(true); return archived;
+        }
+    }
     int pending = 0;
     for (const auto & entry : g_jobs) {
         if (entry.second->status.load() == JobStatus::RUNNING) ++pending;
@@ -227,7 +255,9 @@ static std::shared_ptr<Job> job_create() {
     // as insertion, so concurrent HTTP requests cannot oversubscribe it.
     if (pending >= 4) return nullptr;
     auto                        job = std::make_shared<Job>();
-    job->id                         = job_make_id();
+    job->id                         = requested_id.empty() ? job_make_id() : requested_id;
+    job_archive::start(job->id);
+    if (created) *created = true;
     g_jobs[job->id]                 = job;
     g_job_order.push_back(job->id);
 
@@ -253,10 +283,13 @@ static std::shared_ptr<Job> job_create() {
     return job;
 }
 
-static std::shared_ptr<Job> job_find(const std::string & id) {
+static std::shared_ptr<Job> job_find(const std::string & id, bool include_body = false) {
     std::lock_guard<std::mutex> lock(mtx_jobs);
     auto                        it = g_jobs.find(id);
-    return it != g_jobs.end() ? it->second : nullptr;
+    if (it != g_jobs.end()) return it->second;
+    auto job = std::make_shared<Job>(); int status = 0;
+    if (!job_archive::read(id,status,job->result_mime,job->result_body,include_body)) return nullptr;
+    job->id = id; job->status.store((JobStatus)status); job->durable.store(true); return job;
 }
 
 static const char * job_status_str(JobStatus s) {
@@ -269,6 +302,8 @@ static const char * job_status_str(JobStatus s) {
             return "failed";
         case JobStatus::CANCELLED:
             return "cancelled";
+        case JobStatus::INTERRUPTED:
+            return "interrupted";
     }
     return "running";
 }
@@ -401,28 +436,55 @@ static std::deque<std::function<void()>> g_work_queue;
 static std::mutex                        mtx_work;
 static std::condition_variable           cv_work;
 static bool                              g_work_stop = false;
+static std::atomic<bool> g_native_resource{false};
+static std::timed_mutex g_resource_gate;
+static int g_comfy_port=8188;
+static void wait_for_artwork(const std::shared_ptr<Job> & job) {
+    httplib::Client client("127.0.0.1",g_comfy_port);client.set_connection_timeout(1);client.set_read_timeout(3);
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::minutes(20);
+    for(;;) {
+        if(job->cancel.load())throw std::runtime_error("Cancelled before GPU handoff");
+        auto response=client.Get("/queue");if(!response)return;
+        auto doc=yyjson_read(response->body.data(),response->body.size(),0);if(!doc)throw std::runtime_error("Cannot inspect artwork queue");
+        auto root=yyjson_doc_get_root(doc);bool busy=yyjson_arr_size(yyjson_obj_get(root,"queue_running")) || yyjson_arr_size(yyjson_obj_get(root,"queue_pending"));yyjson_doc_free(doc);
+        if(!busy) { client.Post("/free","{\"unload_models\":true,\"free_memory\":true}","application/json");return; }
+        {std::lock_guard<std::mutex> lock(job->progress_mutex);job->stage="Waiting for artwork GPU";}
+        if(std::chrono::steady_clock::now()>deadline)throw std::runtime_error("Artwork queue did not become idle within 20 minutes");
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+}
 
 static void work_push(std::shared_ptr<Job> job, std::function<void()> fn) {
     {
         std::lock_guard<std::mutex> lock(mtx_work);
         if (g_work_stop) {
-            job->status.store(JobStatus::CANCELLED);
+            job_finish(job, JobStatus::CANCELLED);
             return;
         }
         g_work_queue.push_back([job, fn = std::move(fn)] {
             if (job->cancel.load()) {
-                job->status.store(JobStatus::CANCELLED);
+                job_finish(job, JobStatus::CANCELLED);
                 return;
             }
             try {
+                std::unique_lock<std::timed_mutex> ownership(g_resource_gate,std::defer_lock);
+                while(!ownership.try_lock_for(std::chrono::milliseconds(200)))if(job->cancel.load())throw std::runtime_error("Cancelled waiting for resource");
+                g_native_resource.store(true);
+                wait_for_artwork(job);
+                job->started.store(true);
+                { std::lock_guard<std::mutex> lock(job->progress_mutex);job->stage=job->kind;job->stage_start=std::chrono::steady_clock::now(); }
+                active_job_set(job);
+                audio_process_cancel = &job->cancel;
                 fn();
             } catch (const std::exception & error) {
                 fprintf(stderr, "[Server] Job %s failed: %s\n", job->id.c_str(), error.what());
-                job->status.store(JobStatus::FAILED);
+                job_finish(job,job->cancel.load()?JobStatus::CANCELLED:JobStatus::FAILED);
             } catch (...) {
                 fprintf(stderr, "[Server] Job %s failed: unknown exception\n", job->id.c_str());
-                job->status.store(JobStatus::FAILED);
+                job_finish(job, JobStatus::FAILED);
             }
+            g_native_resource.store(false);
+            audio_process_cancel = nullptr;
             active_job_set(nullptr);
         });
     }
@@ -586,12 +648,12 @@ static void run_transcribe(std::shared_ptr<Job> job, std::vector<float> audio, b
     active_job_set(nullptr);
     if (!ok) {
         fprintf(stderr, "[Server] Transcribe job %s failed: %s\n", job->id.c_str(), error.c_str());
-        job->status.store(job->cancel.load() ? JobStatus::CANCELLED : JobStatus::FAILED);
+        job_finish(job, job->cancel.load() ? JobStatus::CANCELLED : JobStatus::FAILED);
         return;
     }
     job->result_body = json_string("abc", abc);
     job->result_mime = "application/json";
-    job->status.store(JobStatus::DONE);
+    job_finish(job, JobStatus::DONE);
 }
 
 static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
@@ -599,11 +661,14 @@ static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
     fprintf(stderr, "[Server] Job %s: %s\n", job->id.c_str(), request_to_json(&request).c_str());
 
     std::vector<Yue2Song> songs;
+    g_pipeline.progress=[job](const char *stage,int done,int total) { std::lock_guard<std::mutex> lock(job->progress_mutex); if(job->stage!=stage)job->stage_start=std::chrono::steady_clock::now();job->stage=stage;job->stage_done=done;job->stage_total=total; };
     bool ok = pipeline_generate(&g_pipeline, request, &songs, server_cancel_job, (void *) &job->cancel);
+    g_pipeline.progress={};
+    { std::lock_guard<std::mutex> lock(job->progress_mutex);job->stage="Encoding and mastering";job->stage_done=job->stage_total=0; }
 
     if (!ok) {
         active_job_set(nullptr);
-        job->status.store(job->cancel.load() ? JobStatus::CANCELLED : JobStatus::FAILED);
+        job_finish(job, job->cancel.load() ? JobStatus::CANCELLED : JobStatus::FAILED);
         return;
     }
 
@@ -626,7 +691,7 @@ static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
                                      request.mastering_profile, &mastered, &error)) {
                 fprintf(stderr, "[Master] Job %s failed: %s\n", job->id.c_str(), error.c_str());
                 active_job_set(nullptr);
-                job->status.store(JobStatus::FAILED);
+                job_finish(job, JobStatus::FAILED);
                 return;
             }
             // Keep the original take beside its master for in-app A/B preview.
@@ -638,7 +703,7 @@ static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
                          audio_encode_wav(song.audio.data(), song.T_audio, YUE2_SAMPLE_RATE, wav_fmt));
             if (audio_parts.back().empty()) {
                 active_job_set(nullptr);
-                job->status.store(JobStatus::FAILED);
+                job_finish(job, JobStatus::FAILED);
                 return;
             }
             Yue2Request original = request_replay(request, song.score.empty() ? request.abc : song.score,
@@ -655,7 +720,7 @@ static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
                      audio_encode_wav(song.audio.data(), song.T_audio, YUE2_SAMPLE_RATE, wav_fmt));
         if (audio_parts.back().empty()) {
             active_job_set(nullptr);
-            job->status.store(JobStatus::FAILED);
+            job_finish(job, JobStatus::FAILED);
             return;
         }
         Yue2Request replay = request_replay(request, song.score.empty() ? request.abc : song.score,
@@ -666,7 +731,7 @@ static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
     active_job_set(nullptr);
     job->result_body = multipart_build_tracks(request_parts, audio_parts, is_mp3 ? "audio/mpeg" : "audio/wav");
     job->result_mime = MULTIPART_MIME;
-    job->status.store(JobStatus::DONE);
+    job_finish(job, JobStatus::DONE);
 }
 
 static void print_usage(const char * prog) {
@@ -786,7 +851,9 @@ int main(int argc, char ** argv) {
     std::thread worker(worker_main);
 
     httplib::Server svr;
-    register_comfy_api(svr, comfy_port);
+    svr.set_payload_max_length(270ULL*1024*1024);
+    g_comfy_port=comfy_port;
+    register_comfy_api(svr, comfy_port, []{return g_native_resource.load();}, &g_resource_gate);
     g_svr = &svr;
 
     // SO_REUSEADDR lets us rebind a port still in TIME_WAIT after a restart.
@@ -810,6 +877,18 @@ int main(int argc, char ** argv) {
     });
 
     svr.Get("/props", handle_props);
+    register_saved_presets(svr);
+    register_youtube_api(svr);
+    svr.Get("/ollama/api/tags",[](const httplib::Request &,httplib::Response &res){httplib::Client client("127.0.0.1",11434);client.set_connection_timeout(2);client.set_read_timeout(10);auto response=client.Get("/api/tags");if(!response){res.status=503;return;}res.status=response->status;res.set_content(response->body,"application/json");});
+    svr.Post("/ollama/api/generate",[](const httplib::Request &req,httplib::Response &res){
+        std::unique_lock<std::timed_mutex> ownership(g_resource_gate,std::try_to_lock);
+        if(!ownership.owns_lock()){res.status=409;res.set_content(json_string("error","Studio GPU is busy. Try lyrics when the current operation finishes."),"application/json");return;}
+        if(req.body.size()>1024*1024){res.status=413;return;}
+        auto check=std::make_shared<Job>();wait_for_artwork(check);
+        httplib::Client client("127.0.0.1",11434);client.set_connection_timeout(2);client.set_read_timeout(600);
+        auto response=client.Post("/api/generate",req.body,"application/json");
+        if(!response){res.status=503;res.set_content(json_string("error","Ollama request failed or timed out"),"application/json");return;}res.status=response->status;res.set_content(response->body,"application/json");
+    });
 
     svr.Get("/logs", handle_logs);
 
@@ -818,13 +897,18 @@ int main(int argc, char ** argv) {
         if (!validate(req, res, &request)) {
             return;
         }
-        auto job = job_create();
+        const auto requested_id = req.get_header_value("X-Yue2-Job-Id");
+        if (!requested_id.empty() && !job_archive::valid_id(requested_id)) { res.status = 400; res.set_content(json_string("error","invalid recovery ID"),"application/json"); return; }
+        bool created = false;
+        std::shared_ptr<Job> job;
+        try { job = job_create(requested_id,&created); }
+        catch (const std::exception & error) { res.status = 507; res.set_content(json_string("error",error.what()),"application/json"); return; }
         if (!job) {
             res.status = 429;
             res.set_content(json_string("error", "generation queue full; wait for a job to finish"), "application/json");
             return;
         }
-        work_push(job, [job, request] { run_job(job, request); });
+        if (created) work_push(job, [job, request] { run_job(job, request); });
         res.set_content(json_string("id", job->id), "application/json");
     });
 
@@ -862,6 +946,18 @@ int main(int argc, char ** argv) {
     // POST /vocal-balance, multipart/form-data: an audio file and a vocal
     // gain in dB. The original upload is never modified.
     svr.Post("/vocal-balance", [](const httplib::Request & req, httplib::Response & res) {
+        if (req.body.size() > 256ULL * 1024 * 1024) { res.status=413; res.set_content(json_string("error","Media request exceeds 256 MiB"),"application/json"); return; }
+        if(!audio_tool_available("ffmpeg") || (req.path=="/vocal-balance" && !audio_tool_available("audio-separator"))) {res.status=503;res.set_content(json_string("error","Required FFmpeg or audio-separator dependency is missing. Check Studio setup before retrying."),"application/json");return;}
+        const auto id = req.get_header_value("X-Yue2-Job-Id");
+        if (!id.empty() && !job_archive::valid_id(id)) { res.status=400; return; }
+        bool created = false; std::shared_ptr<Job> job;
+        try { job = job_create(id,&created); } catch(const std::exception & e) { res.status=507; res.set_content(json_string("error",e.what()),"application/json"); return; }
+        if (!job) { res.status=429; res.set_content(json_string("error","Studio queue is full"),"application/json"); return; }
+        if (created) {
+            job->kind = "vocal-balance";
+            work_push(job, [job, req] {
+                httplib::Response result;
+                auto process = [](const httplib::Request & req, httplib::Response & res) {
         if (!req.is_multipart_form_data() || !req.form.has_file("audio") || !req.form.has_field("vocal_gain_db")) {
             res.status = 400;
             res.set_content(json_string("error", "multipart audio and vocal_gain_db fields required"), "application/json");
@@ -907,10 +1003,102 @@ int main(int argc, char ** argv) {
         snprintf(applied_gain_text, sizeof(applied_gain_text), "%.1f", (double) applied_gain);
         res.set_header("X-Yue2-Vocal-Gain-Db", applied_gain_text);
         res.set_content(wav, "audio/wav");
+
+                };
+                process(req,result);
+                job->result_body = std::move(result.body);
+                job->result_mime = result.get_header_value("Content-Type");
+                const auto gain = result.get_header_value("X-Yue2-Vocal-Gain-Db");
+                if (!gain.empty()) job->result_mime += ";gain=" + gain;
+                job_finish(job, job->cancel.load() ? JobStatus::CANCELLED : result.status >= 400 ? JobStatus::FAILED : JobStatus::DONE);
+            });
+        }
+        res.set_content(json_string("id",job->id),"application/json");
     });
 
+    // POST /render-video, multipart/form-data: an "audio" part (MP3 or WAV,
+    // the finished track) and a "cover" part (PNG, JPEG or WebP). Renders a
+    // 1920x1080 MP4 (H.264 + AAC) for YouTube delivery. The uploads are
+    // never modified.
+    svr.Post("/render-video", [](const httplib::Request & req, httplib::Response & res) {
+        if (req.body.size() > 256ULL * 1024 * 1024) { res.status=413; res.set_content(json_string("error","Media request exceeds 256 MiB"),"application/json"); return; }
+        const auto id = req.get_header_value("X-Yue2-Job-Id");
+        if (!id.empty() && !job_archive::valid_id(id)) { res.status=400; return; }
+        bool created = false; std::shared_ptr<Job> job;
+        try { job = job_create(id,&created); } catch(const std::exception & e) { res.status=507; res.set_content(json_string("error",e.what()),"application/json"); return; }
+        if (!job) { res.status=429; res.set_content(json_string("error","Studio queue is full"),"application/json"); return; }
+        if (created) {
+            job->kind = "render-video";
+            work_push(job, [job, req] {
+                httplib::Response result;
+                auto process = [](const httplib::Request & req, httplib::Response & res) {
+        if (req.body.size() > 256 * 1024 * 1024) {
+            res.status = 413;
+            res.set_content(json_string("error", "video render request exceeds 256 MiB"), "application/json");
+            return;
+        }
+        if (!req.is_multipart_form_data() || !req.form.has_file("audio") || !req.form.has_file("cover")) {
+            res.status = 400;
+            res.set_content(json_string("error", "multipart audio and cover fields required"), "application/json");
+            return;
+        }
+        const std::string & audio_file = req.form.get_file("audio").content;
+        const std::string & cover_file = req.form.get_file("cover").content;
+        const std::string audio_name = req.form.get_file("audio").filename;
+        const std::string cover_name = req.form.get_file("cover").filename;
+        const std::string audio_ext = video_ext_of(audio_name, ".mp3");
+        const std::string cover_ext = video_ext_of(cover_name, ".png");
+        if (audio_ext != ".mp3" && audio_ext != ".wav") {
+            res.status = 400;
+            res.set_content(json_string("error", "audio must be MP3 or WAV"), "application/json");
+            return;
+        }
+        if (cover_ext != ".png" && cover_ext != ".jpg" && cover_ext != ".jpeg" && cover_ext != ".webp") {
+            res.status = 400;
+            res.set_content(json_string("error", "cover must be PNG, JPEG or WebP"), "application/json");
+            return;
+        }
+        std::string mp4, error;
+        if (!audio_render_video_ffmpeg(cover_file, cover_ext, audio_file, audio_ext, &mp4, &error)) {
+            res.status = 503;
+            res.set_content(json_string("error", error), "application/json");
+            return;
+        }
+        res.set_content(mp4, "video/mp4");
+
+                };
+                process(req,result);
+                job->result_body = std::move(result.body);
+                job->result_mime = result.get_header_value("Content-Type");
+                const auto gain = result.get_header_value("X-Yue2-Vocal-Gain-Db");
+                if (!gain.empty()) job->result_mime += ";gain=" + gain;
+                job_finish(job, job->cancel.load() ? JobStatus::CANCELLED : result.status >= 400 ? JobStatus::FAILED : JobStatus::DONE);
+            });
+        }
+        res.set_content(json_string("id",job->id),"application/json");
+    });
+
+    svr.Get("/capabilities",[](const httplib::Request &,httplib::Response &res){
+        res.set_content(std::string("{\"ffmpeg\":")+(audio_tool_available("ffmpeg")?"true":"false")+",\"separator\":"+(audio_tool_available("audio-separator")?"true":"false")+"}","application/json");
+    });
+    svr.Get("/jobs", [](const httplib::Request &, httplib::Response & res) {
+        std::lock_guard<std::mutex> lock(mtx_jobs);
+        std::string body="[";
+        int position=0;
+        for(const auto &id:g_job_order) {
+            const auto found=g_jobs.find(id);if(found==g_jobs.end())continue;
+            const auto &job=found->second;if(job->status.load()!=JobStatus::RUNNING)continue;
+            std::lock_guard<std::mutex> progress(job->progress_mutex);
+            if(body.size()>1)body+=",";
+            auto fields=json_string("stage",job->stage);fields.pop_back();
+            body+=fields+",\"id\":\""+job->id+"\",\"queuePosition\":"+std::to_string(position++)+",\"done\":"+std::to_string(job->stage_done)+",\"total\":"+std::to_string(job->stage_total)+",\"elapsed\":"+std::to_string(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now()-job->stage_start).count())+"}";
+        }
+        res.set_content(body+"]","application/json");
+    });
     svr.Get("/job", [](const httplib::Request & req, httplib::Response & res) {
-        auto job = job_find(req.get_param_value("id"));
+        std::shared_ptr<Job> job;
+        try { job = job_find(req.get_param_value("id"),req.has_param("result")); }
+        catch (const std::exception & error) { res.status = 500; res.set_content(json_string("error",error.what()),"application/json"); return; }
         if (!job) {
             res.status = 404;
             res.set_content(json_string("error", "job not found"), "application/json");
@@ -918,7 +1106,12 @@ int main(int argc, char ** argv) {
         }
         JobStatus status = job->status.load();
         if (!req.has_param("result")) {
-            res.set_content(json_string("status", job_status_str(status)), "application/json");
+            res.set_content(std::string("{\"status\":\"") + job_status_str(status) + "\",\"durable\":" + (job->durable.load() ? "true" : "false") + "}", "application/json");
+            return;
+        }
+        if (status == JobStatus::FAILED) {
+            res.status = 422;
+            res.set_content(job->result_mime=="application/json"&&!job->result_body.empty()?job->result_body:json_string("error","Processing failed. Check Studio activity for the dependency or model error."),"application/json");
             return;
         }
         if (status != JobStatus::DONE) {
@@ -939,6 +1132,10 @@ int main(int argc, char ** argv) {
         if (req.has_param("cancel")) {
             job->cancel.store(true);
             fprintf(stderr, "[Server] Cancel requested for job %s\n", job->id.c_str());
+        }
+        if (req.has_param("ack") && job->status.load() == JobStatus::DONE) {
+            try { job_archive::acknowledge(job->id); job_archive::cleanup(); }
+            catch (const std::exception & error) { res.status = 500; res.set_content(json_string("error",error.what()),"application/json"); return; }
         }
         res.set_content(json_string("status", job_status_str(job->status.load())), "application/json");
     });

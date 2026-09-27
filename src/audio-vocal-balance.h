@@ -18,28 +18,97 @@
 
 #ifdef _WIN32
 #    include <process.h>
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
+#    ifndef WIN32_LEAN_AND_MEAN
+#        define WIN32_LEAN_AND_MEAN
+#    endif
+#    include <windows.h>
 #else
 #    include <spawn.h>
 #    include <sys/types.h>
 #    include <sys/wait.h>
 #    include <unistd.h>
+#    include <signal.h>
 extern char ** environ;
 #endif
 
+static std::string audio_tool_path(const std::string & name) {
+    if(name=="audio-separator"){
+#ifdef _WIN32
+        const auto local=std::filesystem::absolute(".venv-vocal/Scripts/audio-separator.exe");
+#else
+        const auto local=std::filesystem::absolute(".venv-vocal/bin/audio-separator");
+#endif
+        if(std::filesystem::exists(local))return local.string();
+    }
+    return name;
+}
+static bool audio_tool_available(const std::string & name) {
+    const auto resolved=audio_tool_path(name);
+    if(resolved!=name)return true;
+#ifdef _WIN32
+    char path[32768]; return SearchPathA(nullptr,name.c_str(),".exe",sizeof(path),path,nullptr)>0;
+#else
+    const char * env=getenv("PATH");if(!env)return false;std::string paths(env);size_t start=0;
+    do {size_t end=paths.find(':',start);auto path=paths.substr(start,end-start)+"/"+name;if(access(path.c_str(),X_OK)==0)return true;if(end==std::string::npos)break;start=end+1;}while(true);return false;
+#endif
+}
+static thread_local std::atomic<bool> * audio_process_cancel = nullptr;
+
 static int audio_vocal_run(const char * executable, std::vector<std::string> & args) {
+    const auto resolved_executable=audio_tool_path(executable);
+    executable=resolved_executable.c_str();
     std::vector<char *> argv;
     argv.reserve(args.size() + 1);
     for (std::string & arg : args) argv.push_back(arg.data());
     argv.push_back(nullptr);
 #ifdef _WIN32
-    const intptr_t rc = _spawnvp(_P_WAIT, executable, argv.data());
-    return rc == -1 ? (errno == ENOENT ? -1 : 1) : (int) rc;
+    // Preserve embedded quotes and paths when _spawnvp joins argv on Windows.
+    std::vector<std::string> quoted;quoted.reserve(args.size());
+    for(const auto &arg:args){
+        std::string q="\"";size_t slashes=0;
+        for(char c:arg){if(c=='\\'){slashes++;continue;}
+            if(c=='"'){q.append(slashes*2+1,'\\');q+='"';}
+            else{q.append(slashes,'\\');q+=c;}slashes=0;
+        }
+        q.append(slashes*2,'\\');q+='"';quoted.push_back(std::move(q));
+    }
+    argv.clear();for(auto &arg:quoted)argv.push_back(arg.data());argv.push_back(nullptr);
+    const intptr_t rc = _spawnvp(_P_NOWAIT, executable, argv.data());
+    if (rc == -1) return errno == ENOENT ? -1 : 1;
+    HANDLE process = (HANDLE)rc;
+    HANDLE group = CreateJobObjectW(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (group) { SetInformationJobObject(group, JobObjectExtendedLimitInformation, &limits, sizeof(limits)); AssignProcessToJobObject(group, process); }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(30);
+    while (WaitForSingleObject(process, 200) == WAIT_TIMEOUT) {
+        if ((audio_process_cancel && audio_process_cancel->load()) || std::chrono::steady_clock::now() >= deadline) {
+            if (group) TerminateJobObject(group, 1);
+            TerminateProcess(process, 1); WaitForSingleObject(process, 5000);
+            if (group) CloseHandle(group); CloseHandle(process); return 2;
+        }
+    }
+    DWORD status = 1; GetExitCodeProcess(process, &status);
+    if (group) CloseHandle(group); CloseHandle(process);
+    return (int)status;
 #else
     pid_t pid = -1;
-    const int spawn_error = posix_spawnp(&pid, executable, nullptr, nullptr, argv.data(), environ);
+    posix_spawnattr_t attr; posix_spawnattr_init(&attr);
+    posix_spawnattr_setflags(&attr,POSIX_SPAWN_SETPGROUP);
+    posix_spawnattr_setpgroup(&attr,0);
+    const int spawn_error = posix_spawnp(&pid, executable, nullptr, &attr, argv.data(), environ);
+    posix_spawnattr_destroy(&attr);
     if (spawn_error != 0) return spawn_error == ENOENT ? -1 : 1;
     int status = 0;
-    if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status)) return -1;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(30);
+    while (waitpid(pid, &status, WNOHANG) == 0) {
+        if ((audio_process_cancel && audio_process_cancel->load()) || std::chrono::steady_clock::now() >= deadline) { kill(-pid,SIGKILL); waitpid(pid,&status,0); return 2; }
+        usleep(200000);
+    }
+    if (!WIFEXITED(status)) return -1;
     return WEXITSTATUS(status);
 #endif
 }
@@ -182,7 +251,7 @@ static bool audio_vocal_balance_ffmpeg(const float * audio,
     std::string rate = std::to_string(sample_rate);
     std::vector<std::string> remix = {"ffmpeg", "-hide_banner", "-nostdin", "-y", "-loglevel", "error",
         "-i", backing_arg, "-i", vocal_arg, "-filter_complex",
-        std::string("[1:a]") + gain + "[v];[0:a][v]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.98,atrim=end_sample=" + std::to_string(samples) + ",asetpts=PTS-STARTPTS[out]",
+        std::string("[1:a]") + gain + "[v];[0:a][v]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.98:latency=1,aresample=" + rate + ",apad=whole_len=" + std::to_string(samples) + ",atrim=end_sample=" + std::to_string(samples) + ",asetpts=PTS-STARTPTS[out]",
         "-map", "[out]", "-ar", rate, "-c:a", "pcm_f32le", output_arg};
     const int ffmpeg_status = audio_vocal_run("ffmpeg", remix);
     if (ffmpeg_status != 0) {

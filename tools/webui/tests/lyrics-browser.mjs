@@ -78,7 +78,7 @@ try {
     else {lyricCalls.push(JSON.parse(request.postData));data={response:'[Verse]\nA fresh test verse with a rhythmic rhyme.'};}
     await send('Fetch.fulfillRequest',{requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:'application/json'},{name:'Access-Control-Allow-Origin',value:'*'},{name:'Access-Control-Allow-Headers',value:'content-type'},{name:'Access-Control-Allow-Methods',value:'GET, POST, OPTIONS'}],body:Buffer.from(JSON.stringify(data)).toString('base64')});
   });
-  await send('Fetch.enable',{patterns:[{urlPattern:'http://127.0.0.1:11434/*'}]});
+  await send('Fetch.enable',{patterns:[{urlPattern:'*/ollama/*'}]});
   await send('Page.reload');await delay(1000);
   await evaluate("document.querySelector('#lyrics-editor').open=true");
   assert.equal(await evaluate("document.querySelector('[aria-label=\"Primary lyric style\"] optgroup').children.length"),30);

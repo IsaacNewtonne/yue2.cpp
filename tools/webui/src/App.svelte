@@ -2,21 +2,32 @@
 	import { Volume2, AudioWaveform, Wifi, WifiOff, House, Music2, Library, SlidersHorizontal, Settings, Mic2, Sparkles } from '@lucide/svelte';
 	import './studio.css';
 	import './reference-studio.css';
-	import { app } from './lib/state.svelte.js';
+	import './glass-studio.css';
+	import './theme-readability.css';
+	import './interactions.css';
+	import { app, retrySettingsStorage, toast } from './lib/state.svelte.js';
 	import { props } from './lib/api.js';
 	import { getAllSongs } from './lib/db.js';
 	import { PROPS_POLL_MS } from './lib/config.js';
 	import RequestForm from './components/RequestForm.svelte';
+	import Albums from './components/Albums.svelte';
 	import SongList from './components/SongList.svelte';
 	import StudioRail from './components/StudioRail.svelte';
 	import Toast from './components/Toast.svelte';
-	import { MUSIC_STYLE_BY_ID } from './lib/style-profiles.js';
+	import SavedPresets from './components/SavedPresets.svelte';
 
-	type Theme = 'dark' | 'cyberpunk' | 'colorful' | 'mint' | 'burnt-orange';
+	type Theme = 'studio' | 'dark' | 'cyberpunk' | 'colorful' | 'mint' | 'burnt-orange';
 	type StudioPage = 'create' | 'library';
 	function initialTheme(): Theme {
-		try { const saved = localStorage.getItem('yue2-theme'); return ['dark', 'cyberpunk', 'colorful', 'mint', 'burnt-orange'].includes(saved || '') ? saved as Theme : 'mint'; }
-		catch { return 'mint'; }
+		try {
+			if (!localStorage.getItem('yue2-glass-introduced')) {
+				localStorage.setItem('yue2-glass-introduced', '1');
+				localStorage.setItem('yue2-theme', 'studio');
+				return 'studio';
+			}
+			const saved = localStorage.getItem('yue2-theme');
+			return ['studio', 'dark', 'cyberpunk', 'colorful', 'mint', 'burnt-orange'].includes(saved || '') ? saved as Theme : 'studio';
+		} catch { return 'studio'; }
 	}
 	let theme = $state<Theme>(initialTheme());
 	let currentPage = $state<StudioPage>('create');
@@ -28,9 +39,12 @@
 
 	// boot: load songs from IndexedDB
 	$effect(() => {
-		getAllSongs()
-			.then((songs) => (app.songs = songs.reverse()))
-			.catch(() => {});
+		let disposed = false;
+		let revision = 0;
+		const refresh = async () => { const current = ++revision; try { const songs = await getAllSongs(); if (!disposed && current === revision) app.songs = songs.reverse(); } catch { if (!disposed) toast('The library could not be opened. Allow browser storage or free space, then reload.'); } };
+		void refresh();
+		window.addEventListener('yue2-library-changed', refresh);
+		return () => { disposed = true; window.removeEventListener('yue2-library-changed', refresh); };
 	});
 
 	// poll /props every PROPS_POLL_MS, null on failure (grey badges)
@@ -49,6 +63,8 @@
 	function onVolume(e: Event) {
 		app.volume = Number((e.target as HTMLInputElement).value);
 	}
+	$effect(() => { currentPage; window.dispatchEvent(new Event('yue2-navigation')); });
+	$effect(() => { const navigate = (event: Event) => focusSection((event as CustomEvent<string>).detail); window.addEventListener('yue2-navigate', navigate); return () => window.removeEventListener('yue2-navigate',navigate); });
 	function focusSection(id: string) {
 		currentPage = 'create';
 		requestAnimationFrame(() => { const section = document.getElementById(id); if (section instanceof HTMLDetailsElement) section.open = true; section?.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
@@ -56,20 +72,7 @@
 	$effect(() => {
 		if (app.remix) focusSection('engine-workbench');
 	});
-	function selectQuickStyle(id: string) {
-		currentPage = 'create';
-		requestAnimationFrame(() => {
-			window.dispatchEvent(new CustomEvent('yue2-select-style', { detail: id }));
-			document.getElementById('music-workbench')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-		});
-	}
-	const quickStyles = [
-		['001_boom_bap', 'Classic drums'], ['003_underground_hip_hop', 'Dusty & raw'],
-		['004_lo_fi_hip_hop', 'Warm & hazy'], ['005_jazz_rap', 'Jazz samples'],
-		['013_west_coast_hip_hop', 'West Coast'], ['022_trap', '808s & hi-hats'],
-		['030_drill', 'Dark & percussive'], ['048_soul_hip_hop', 'Soulful samples']
-	] as const;
-
+	$effect(() => { const warn = (event: Event) => toast((event as CustomEvent<string>).detail,10000); window.addEventListener('yue2-recovery-warning',warn); return () => window.removeEventListener('yue2-recovery-warning',warn); });
 	// studio theme is dark-only: pin the class, keep app.dark for persistence
 	$effect(() => {
 		document.documentElement.classList.add('dark');
@@ -91,6 +94,7 @@
 </script>
 
 <div class="yue2-app">
+	{#if app.storageWarning}<div class="storage-warning" role="status">{app.storageWarning} <button type="button" onclick={retrySettingsStorage}>Save settings again</button></div>{/if}
 	<header class="topbar">
 		<div class="brand"><span class="brand-mark"><AudioWaveform size={19} /></span><span class="brand-name">YuE2 Studio</span><span class="brand-version">LOCAL STUDIO</span></div>
 		<div class="status-pill" class:online={app.props} class:offline={!app.props} title={statusText}>
@@ -98,8 +102,8 @@
 		</div>
 		<div class="topbar-spacer"></div>
 		<div class="volume"><Volume2 size={15} /><input type="range" min="0" max="1" step="0.01" value={app.volume} oninput={onVolume} aria-label="Playback volume" /></div>
-		<label class="topbar-theme"><span class="sr-only">Color theme</span><select aria-label="Color theme" value={theme} onchange={e => setTheme(e.currentTarget.value as Theme)}><option value="mint">Mint</option><option value="dark">Dark</option><option value="cyberpunk">Cyberpunk</option><option value="colorful">Colorful</option><option value="burnt-orange">Burnt Orange</option></select></label>
-  <a class="settings-shortcut" href="#settings" aria-label="Studio settings"><Settings size={17} /></a>
+		<label class="topbar-theme"><span class="sr-only">Color theme</span><select aria-label="Color theme" value={theme} onchange={e => setTheme(e.currentTarget.value as Theme)}><option value="studio">Studio Glass</option><option value="mint">Mint</option><option value="dark">Dark</option><option value="cyberpunk">Cyberpunk</option><option value="colorful">Colorful</option><option value="burnt-orange">Burnt Orange</option></select></label>
+  <a class="settings-shortcut" href="#settings" onclick={() => focusSection('settings')} aria-label="Studio settings"><Settings size={17} /></a>
 	</header>
 
 	<div class="studio-frame">
@@ -108,29 +112,35 @@
 				<button type="button" onclick={() => { currentPage = 'create'; requestAnimationFrame(() => document.querySelector('.center-scroll')?.scrollTo({ top: 0, behavior: 'smooth' })); }}><House size={17} /> Home</button>
 				<button class:active={currentPage === 'create'} type="button" onclick={() => { currentPage = 'create'; }}><Music2 size={17} /> Create</button>
 				<button class:active={currentPage === 'library'} type="button" onclick={() => { currentPage = 'library'; }}><Library size={17} /> Library <span class="side-count">{app.songs.length}</span></button>
+				<button type="button" onclick={() => { currentPage='library'; requestAnimationFrame(()=>document.getElementById('albums')?.scrollIntoView()); }}>Albums</button>
 				<button type="button" onclick={() => focusSection('music-workbench')}><Sparkles size={17} /> Presets</button>
 				<button type="button" onclick={() => focusSection('lyrics-editor')}><Mic2 size={17} /> Lyrics</button>
 				<button type="button" onclick={() => focusSection('engine-workbench')}><SlidersHorizontal size={17} /> Mix &amp; Render</button>
-				<a href="#settings"><Settings size={17} /> Settings</a>
+				<a href="#settings" onclick={() => focusSection('settings')}><Settings size={17} /> Settings</a>
 			</nav>
-			<div class="quick-style-block">
-				<p class="sidebar-label">QUICK STYLES</p>
-				{#each quickStyles as [id, subtitle]}
-					{@const style = MUSIC_STYLE_BY_ID[id]}
-					<button class="quick-style" type="button" onclick={() => selectQuickStyle(id)} aria-label={`Use ${style.name} style`}><img class="quick-art" src={style.thumbnail} alt="" /><span><strong>{style.name}</strong><small>{subtitle}</small></span></button>
-				{/each}
-			</div>
-			<button class="add-style" type="button" onclick={() => focusSection('music-workbench')}>＋ <span>Add a style</span></button>
+			<SavedPresets onload={(preset) => {
+                focusSection(preset.kind === 'music' ? 'music-workbench' : 'lyrics-editor');
+                requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('yue2-load-blend', { detail: preset })));
+            }} onmanage={() => {
+                focusSection('music-workbench');
+                requestAnimationFrame(() => {
+                    const blend = document.querySelector<HTMLDetailsElement>('.blend-disclosure');
+                    const favourites = blend?.querySelector<HTMLDetailsElement>('.favourites');
+                    if (blend) blend.open = true;
+                    if (favourites) { favourites.open = true; favourites.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+                });
+            }} />
 		</aside>
 
 			<main class="workspace-main" style:display={currentPage === 'create' ? undefined : 'none'}>
 				<div class="center-scroll" id="create"><RequestForm /></div>
-				<StudioRail onOpenLibrary={() => currentPage = 'library'} />
+				{#if currentPage === 'create'}<StudioRail onOpenLibrary={() => currentPage = 'library'} />{/if}
 			</main>
 		{#if currentPage === 'library'}
 			<div class="library-workspace">
 				<main class="library-main">
 					<section class="library-page-head"><div><p class="sidebar-label">YOUR LOCAL COLLECTION</p><h1>Library</h1><p>{app.songs.length} track{app.songs.length === 1 ? '' : 's'} saved on this device</p></div><button type="button" onclick={() => currentPage = 'create'}><Music2 size={15} /> Create a track</button></section>
+					<Albums />
 					<SongList showLog={false} />
 				</main>
 				<div class="library-rail"><StudioRail onOpenLibrary={() => currentPage = 'library'} showGenerated={false} /></div>

@@ -72,7 +72,7 @@ try {
     const buffer=new ArrayBuffer(96044),view=new DataView(buffer);
     const text=(o,s)=>{for(let i=0;i<s.length;i++)view.setUint8(o+i,s.charCodeAt(i))};
     text(0,'RIFF');view.setUint32(4,96036,true);text(8,'WAVEfmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);view.setUint32(24,48000,true);view.setUint32(28,96000,true);view.setUint16(32,2,true);view.setUint16(34,16,true);text(36,'data');view.setUint32(40,96000,true);
-    const open=indexedDB.open('yue2-songs',1);open.onerror=()=>reject(open.error);open.onsuccess=()=>{const db=open.result;const tx=db.transaction('songs','readwrite');const store=tx.objectStore('songs');store.add({name:'Remix source',format:'wav16',created:Date.now(),style:'Jazz Rap',seed:42,duration:1,score:'X:1',request:{style:'Jazz Rap',abc:'X:1',semantic_tokens:'1,2,3',lm_seed:42,seed:9,duration:20,abc_sampling:{},semantic_sampling:{temperature:1,top_p:.95}},audio:new Blob([buffer],{type:'audio/wav'})});tx.oncomplete=()=>{db.close();resolve(true)};tx.onerror=()=>reject(tx.error)};
+    const open=indexedDB.open('yue2-songs');open.onerror=()=>reject(open.error);open.onsuccess=()=>{const db=open.result;const tx=db.transaction('songs','readwrite');const store=tx.objectStore('songs');store.add({name:'Remix source',format:'wav16',created:Date.now(),style:'Jazz Rap',seed:42,duration:1,score:'X:1',request:{style:'Jazz Rap',abc:'X:1',semantic_tokens:'1,2,3',lm_seed:42,seed:9,duration:20,abc_sampling:{},semantic_sampling:{temperature:1,top_p:.95}},audio:new Blob([buffer],{type:'audio/wav'})});tx.oncomplete=()=>{db.close();resolve(true)};tx.onerror=()=>reject(tx.error)};
   })`);
   await send('Page.reload');await delay(1000);
   await evaluate("document.querySelector('[aria-label=\"Remix Remix source\"]').click()");await delay(200);
@@ -102,7 +102,7 @@ try {
   await evaluate("document.querySelector('.generate-btn').click()");await delay(300);
   assert.ok(!submitted.at(-1).abc && !submitted.at(-1).semantic_tokens);
   assert.notEqual(submitted.at(-1).lm_seed,42);
-  const source=await evaluate(`new Promise((resolve,reject)=>{const open=indexedDB.open('yue2-songs',1);open.onsuccess=()=>{const db=open.result;const tx=db.transaction('songs');const get=tx.objectStore('songs').getAll();get.onsuccess=()=>resolve(get.result.map(s=>({name:s.name,request:s.request})));tx.oncomplete=()=>db.close()};open.onerror=()=>reject(open.error)})`);
+  const source=await evaluate(`new Promise((resolve,reject)=>{const open=indexedDB.open('yue2-songs');open.onsuccess=()=>{const db=open.result;const tx=db.transaction('songs');const get=tx.objectStore('songs').getAll();get.onsuccess=()=>resolve(get.result.map(s=>({name:s.name,request:s.request})));tx.oncomplete=()=>db.close()};open.onerror=()=>reject(open.error)})`);
   assert.equal(source.length,1);assert.equal(source[0].name,'Remix source');assert.equal(source[0].request.semantic_tokens,'1,2,3');assert.equal(source[0].request.semantic_sampling.temperature,1);
   assert.deepEqual(errors,[]);
   console.log('PASS: recent/library Remix buttons, navigation, 0/25/75 variation, same seeds and score, repeatability, original untouched, exit to fresh composition, desktop/mobile.');

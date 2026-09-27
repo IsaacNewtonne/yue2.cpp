@@ -46,13 +46,28 @@ export interface Yue2Props {
 
 // what we store in IndexedDB per song
 export interface Song {
+	mediaRevision?: number;
+	videoRevision?: number;
+	videoVersion?: string;
+	videoOutdated?: boolean;
+	artworkJobId?: string;
+	videoJobId?: string;
+	youtubeDraft?: import('./youtube.js').YouTubeDraft;
 	takeGroup?: string;
 	sourceJob?: string;
+	sourceIndex?: number;
 	id?: number;
 	name: string;
 	format: string;
 	created: number;
 	style: string;
+	// style profiles blended for this song (ids into music_styles/ plus their
+	// weights), snapshotted at generation so the card can name them. Absent
+	// on older records, imports and remixes, which fall back to the style prompt.
+	musicStyles?: { id: string; weight: number }[];
+	// lyric engines blended for this song (ids into lyric_styles/ plus their
+	// weights), snapshotted alongside the music blend. Same fallback rules.
+	lyricStyles?: { id: string; weight: number }[];
 	seed: number; // the LM seed, the one that decides which song it is
 	// length of the audio in seconds, decoded once and cached with the peaks
 	duration: number;

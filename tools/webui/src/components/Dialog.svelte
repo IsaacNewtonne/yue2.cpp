@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+	import { tick, type Snippet } from 'svelte';
 	import DialogButton from './DialogButton.svelte';
 
 	let {
@@ -17,6 +17,7 @@
 	} = $props();
 
 	let root = $state<HTMLDivElement>();
+	const titleId = $props.id();
 
 	function cancel() {
 		open = false;
@@ -33,26 +34,40 @@
 	// custom actions snippet the user picks an explicit button.
 	$effect(() => {
 		if (!open) return;
+		const previous = document.activeElement as HTMLElement | null;
+		let cancelled = false;
+		const focusable = () => Array.from(root?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]') ?? []).filter(element => element.getClientRects().length > 0);
+		void tick().then(() => { if (!cancelled) (focusable()[0] ?? root)?.focus(); });
 		const onMouseDown = (e: MouseEvent) => {
 			if (!root?.contains(e.target as Node)) cancel();
 		};
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') cancel();
-			else if (e.key === 'Enter' && !actions) confirm();
+			if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+			else if (e.key === 'Enter' && !actions && e.target instanceof HTMLInputElement && !e.isComposing) { e.preventDefault(); confirm(); }
+			else if (e.key === 'Tab') {
+				const choices = focusable();
+				const first = choices[0];
+				const last = choices[choices.length - 1];
+				if (!first) { e.preventDefault(); root?.focus(); }
+				else if (e.shiftKey && (document.activeElement === first || document.activeElement === root)) { e.preventDefault(); last.focus(); }
+				else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+			}
 		};
 		document.addEventListener('mousedown', onMouseDown);
 		document.addEventListener('keydown', onKey);
 		return () => {
+			cancelled = true;
 			document.removeEventListener('mousedown', onMouseDown);
 			document.removeEventListener('keydown', onKey);
+			if (previous?.isConnected) previous.focus();
 		};
 	});
 </script>
 
 {#if open}
 	<div class="dialog-overlay">
-		<div class="dialog" bind:this={root}>
-			<div class="dialog-title">{title}</div>
+		<div class="dialog" bind:this={root} role="dialog" aria-modal="true" aria-labelledby={titleId} tabindex="-1">
+			<div class="dialog-title" id={titleId}>{title}</div>
 			{#if body}
 				<div class="dialog-body">{@render body()}</div>
 			{/if}

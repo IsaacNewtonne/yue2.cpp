@@ -2,7 +2,7 @@
 	import { angleInfluence, clampInfluence } from '../lib/style-mix.js';
 	let { name, value, color, thumbnail, onchange }: { name: string; value: number; color: string; thumbnail?: string; onchange: (value: number) => void } = $props();
 	let dialStyle = $derived(`--color:${color};--fill:${value}%;--thumbnail:${thumbnail ? `url("${thumbnail}")` : 'none'}`);
-	let dragging = false;
+	let dragging = $state(false);
 	function move(event: PointerEvent) {
 		if (!dragging) return;
 		const box = event.currentTarget as HTMLElement;
@@ -18,7 +18,7 @@
 	}
 </script>
 
-<div class="dial" role="slider" tabindex="0" aria-label={`${name} influence`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={value} aria-valuetext={`${value}% relative influence`} style={dialStyle}
+<div class="dial" class:dragging role="slider" tabindex="0" aria-label={`${name} influence`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={value} aria-valuetext={`${value}% relative influence`} style={dialStyle}
 	onpointerdown={(event) => { dragging = true; event.currentTarget.setPointerCapture(event.pointerId); move(event); }}
 	onpointermove={move} onpointerup={() => { dragging = false; }} onpointercancel={() => { dragging = false; }} onlostpointercapture={() => { dragging = false; }} onkeydown={key}>
 	<span>{value}%</span>

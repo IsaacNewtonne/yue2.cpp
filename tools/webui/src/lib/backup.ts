@@ -1,9 +1,13 @@
+import { listAlbums, validateAlbum } from './album-db.js';
+import type { Album } from './album-types.js';
 import type { Song } from './types.js';
+import { object, validRequest, validSong } from './validation.js';
+import { listPresets, validatePresets, type SavedPreset } from './saved-presets.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const MEDIA_FIELDS = ['audio', 'originalAudio', 'vocalOriginalAudio', 'artwork', 'video'] as const;
-const LOCAL_STORAGE_KEYS = ['yue2', 'yue2-music-blend-favourites-v1', 'yue2-lyric-blend-favourites-v1', 'yue2-music-styles'];
+export const BACKUP_SETTINGS = ['yue2', 'yue2-music-blend-favourites-v1', 'yue2-lyric-blend-favourites-v1', 'yue2-music-styles', 'yue2-style-mix-v1', 'yue2-production-mode', 'yue2-theme', 'yue2-glass-introduced', 'yue2-music-blend-favourites-v1-folder-migrated', 'yue2-lyric-blend-favourites-v1-folder-migrated'];
 const crcTable = new Uint32Array(256);
 for (let n = 0; n < 256; n++) {
 	let c = n;
@@ -18,10 +22,12 @@ type BackupRecord = {
 };
 type Manifest = {
 	format: 'yue2-library-backup';
-	version: 1;
+	version: 1 | 2;
 	created: string;
 	songs: BackupRecord[];
 	settings: Record<string, string>;
+	presets?: SavedPreset[];
+	albums?: Array<{data:Omit<Album,'cover'>;cover?:string}>;
 };
 type ZipEntry = { name: string; blob: Blob; crc: number; size: number; offset: number };
 type ZipDirectoryEntry = { name: string; method: number; crc: number; size: number; offset: number };
@@ -73,7 +79,7 @@ function zipHeader(name: Uint8Array, crc: number, size: number, offset = 0, cent
 	return bytes;
 }
 
-async function createZip(files: Array<{ name: string; blob: Blob }>): Promise<Blob> {
+export async function createZip(files: Array<{ name: string; blob: Blob }>): Promise<Blob> {
 	if (files.length > 0xffff) throw new Error('This library has too many files for a single ZIP backup.');
 	const chunks: BlobPart[] = [];
 	const entries: ZipEntry[] = [];
@@ -107,7 +113,7 @@ async function createZip(files: Array<{ name: string; blob: Blob }>): Promise<Bl
 	return new Blob(chunks, { type: 'application/zip' });
 }
 
-export async function exportLibrary(songs: Song[]): Promise<Blob> {
+export async function exportLibrary(songs: Song[], albumSelection?: Album[]): Promise<Blob> {
 	const files: Array<{ name: string; blob: Blob }> = [];
 	const records: BackupRecord[] = [];
 	for (let index = 0; index < songs.length; index++) {
@@ -128,11 +134,14 @@ export async function exportLibrary(songs: Song[]): Promise<Blob> {
 		records.push({ data, media });
 	}
 	const settings: Record<string, string> = {};
-	for (const key of LOCAL_STORAGE_KEYS) {
+	for (const key of BACKUP_SETTINGS) {
 		const value = localStorage.getItem(key);
 		if (value != null) settings[key] = value;
 	}
-	const manifest: Manifest = { format: 'yue2-library-backup', version: 1, created: new Date().toISOString(), songs: records, settings };
+	const presets = await listPresets();
+	const albums: NonNullable<Manifest['albums']> = [];
+	if (typeof indexedDB !== 'undefined') for(const album of albumSelection ?? await listAlbums()) { const {cover,...data}=album; const path=cover ? `albums/${albums.length}/cover` : undefined; if(cover&&path)files.push({name:path,blob:cover});albums.push({data,cover:path}); }
+	const manifest: Manifest = { format: 'yue2-library-backup', version: 2, created: new Date().toISOString(), songs: records, settings, presets, albums };
 	files.unshift({ name: 'manifest.json', blob: new Blob([JSON.stringify(manifest)], { type: 'application/json' }) });
 	return createZip(files);
 }
@@ -179,17 +188,37 @@ async function zipEntryBlob(archive: Blob, entry: ZipDirectoryEntry): Promise<Bl
 	return blob;
 }
 
-export async function importLibrary(archive: Blob): Promise<{ songs: Song[]; settings: Record<string, string> }> {
+export async function importLibrary(archive: Blob): Promise<{ songs: Song[]; settings: Record<string, string>; presets: SavedPreset[]; albums:Album[] }> {
 	const directory = await readDirectory(archive);
 	const manifestEntry = directory.get('manifest.json');
 	if (!manifestEntry) throw new Error('The backup does not contain a library manifest.');
+	if (manifestEntry.size > 32 * 1024 * 1024) throw new Error('Backup manifest is too large.');
 	const manifest = JSON.parse(await (await zipEntryBlob(archive, manifestEntry)).text()) as Manifest;
-	if (manifest.format !== 'yue2-library-backup' || manifest.version !== 1 || !Array.isArray(manifest.songs)) {
+	if (!manifest || manifest.format !== 'yue2-library-backup' || ![1,2].includes(manifest.version) || !Array.isArray(manifest.songs)) {
 		throw new Error('This YuE2 backup version is not supported.');
 	}
 	if (!manifest.settings || typeof manifest.settings !== 'object' || Array.isArray(manifest.settings)) {
 		throw new Error('The backup contains invalid settings.');
 	}
+	const settings: Record<string,string> = {};
+	for (const key of BACKUP_SETTINGS) {
+		if (!Object.hasOwn(manifest.settings,key)) continue;
+		const raw = manifest.settings[key];
+		if (typeof raw !== 'string') throw new Error(`Invalid backup setting: ${key}`);
+		if (key === 'yue2') {
+			const saved = JSON.parse(raw); if (!object(saved)) throw new Error('Invalid saved Studio settings.');
+			saved.request = validRequest(saved.request ?? {});
+			settings[key] = JSON.stringify(saved); continue;
+		}
+		if (key.endsWith('-v1') || key === 'yue2-music-styles') {
+			const parsed = JSON.parse(raw);
+			if (key === 'yue2-style-mix-v1' ? !object(parsed) : !Array.isArray(parsed)) throw new Error(`Invalid backup setting: ${key}`);
+		}
+		if (key === 'yue2-theme' && !['studio','dark','mint','cyberpunk','colorful','burnt-orange'].includes(raw)) throw new Error('Invalid backup theme.');
+		if (key === 'yue2-production-mode' && !['auto','manual'].includes(raw)) throw new Error('Invalid backup production mode.');
+		settings[key] = raw;
+	}
+	const presets = manifest.version === 2 ? validatePresets(manifest.presets) : [];
 	const songs: Song[] = [];
 	for (const record of manifest.songs) {
 		if (!record || typeof record.data !== 'object' || !record.data || !record.media || typeof record.media !== 'object') {
@@ -206,10 +235,10 @@ export async function importLibrary(archive: Blob): Promise<{ songs: Song[]; set
 				(song as unknown as Record<MediaField, Blob | undefined>)[field] = new Blob([bytes], { type: media.type });
 			}
 		}
-		if (!(song.audio instanceof Blob) || typeof song.name !== 'string' || !song.request) {
-			throw new Error('The backup contains an invalid or incomplete song.');
-		}
-		songs.push(song);
+		songs.push(validSong(song));
 	}
-	return { songs, settings: manifest.settings || {} };
+	const albums:Album[]=[];
+	if(manifest.albums!==undefined&&!Array.isArray(manifest.albums))throw new Error('Invalid album list.');
+	for(const entry of manifest.albums??[]) {const album=validateAlbum(entry.data);if(entry.cover){const record=directory.get(entry.cover);if(!record)throw new Error('Album cover missing.');album.cover=new Blob([await zipEntryBlob(archive,record)],{type:'image/png'});}albums.push(album);}
+	return { songs, settings, presets, albums };
 }

@@ -2,9 +2,10 @@
 	import { AudioLines, Headphones, Library, Play, Pause, Settings2, Sparkles, Download, Heart, Maximize2 } from '@lucide/svelte';
 	import { app, startRemix, toast } from '../lib/state.svelte.js';
 	import { canRemix } from '../lib/remix.js';
-	import { putSong } from '../lib/db.js';
+	import { updateSong } from '../lib/db.js';
 	import Waveform from './Waveform.svelte';
 	import LogCard from './LogCard.svelte';
+	import ArtworkCover from './ArtworkCover.svelte';
 	import type { Song } from '../lib/types.js';
 	let { onOpenLibrary, showGenerated = true }: {
 		onOpenLibrary: () => void;
@@ -21,13 +22,16 @@
 	}
 	async function favorite(song: Song) {
 		const updated = { ...song, favorite: !song.favorite };
-		try { await putSong($state.snapshot(updated)); song.favorite = updated.favorite; }
+		try { if (song.id == null) throw new Error('Track is not saved'); await updateSong(song.id,{favorite:updated.favorite}); song.favorite = updated.favorite; }
 		catch { toast('Could not save this favourite.'); }
 	}
 	function download(song: Song) {
-		const url = URL.createObjectURL(song.audio);
+		// MP4 delivery downloads the video; everything else the audio.
+		const blob = song.format === 'mp4' && song.video ? song.video : song.audio;
+		const ext = blob.type.includes('mp4') || blob.type.includes('video') ? 'mp4' : blob.type.includes('mpeg') ? 'mp3' : 'wav';
+		const url = URL.createObjectURL(blob);
 		const link = document.createElement('a');
-		link.href = url; link.download = `${song.name.replace(/[<>:"/\\|?*]/g, '_') || 'track'}.${song.format.startsWith('wav') ? 'wav' : 'mp3'}`;
+		link.href = url; link.download = `${song.name.replace(/[<>:"/\\|?*]/g, '_') || 'track'}.${ext}`;
 		link.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
 	}
 	let selectedSong = $derived(app.songs.find(song => song.id === selectedId) ?? app.songs[0]);
@@ -50,9 +54,10 @@
 		<section bind:this={previewElement} class="rail-card preview-card" aria-label="Track preview">
 			<div class="rail-card-heading"><div><p class="rail-kicker">LISTEN BACK</p><h2><Headphones size={16} /> Preview</h2></div><button type="button" class="preview-expand" onclick={fullscreen} aria-label="Full screen preview"><Maximize2 size={13}/> Full screen</button></div>
 			{#if selectedSong}
+				{#if selectedSong.artwork}<div class="rail-artwork"><ArtworkCover artwork={selectedSong.artwork} title={selectedSong.name} /></div>{/if}
 				<div class="preview-track-title"><strong>{selectedSong.name}</strong><span>{selectedSong.style || 'Custom sound'} · {formatTime(duration || selectedSong.duration)}</span></div>
 				<div class="preview-player">
-					<button class="preview-play" type="button" aria-label={playing ? 'Pause preview' : 'Play preview'} onclick={() => playing = !playing}>{#if playing}<Pause size={18} fill="currentColor" />{:else}<Play size={18} fill="currentColor" />{/if}</button>
+					<button class="preview-play" type="button" aria-pressed={playing} aria-label={playing ? 'Pause preview' : 'Play preview'} onclick={() => playing = !playing}>{#if playing}<Pause size={18} fill="currentColor" />{:else}<Play size={18} fill="currentColor" />{/if}</button>
 					<div class="preview-wave"><Waveform song={selectedSong} bind:playing bind:time bind:dur={duration} /></div>
 				</div>
 				<div class="preview-time"><span>{formatTime(time)}</span><span>{formatTime(duration)}</span></div>
@@ -63,7 +68,7 @@
 
 		<section class="rail-card output-card">
 			<div class="rail-card-heading"><h2><Sparkles size={16} /> Output</h2></div>
-			<div class="monitor-controls"><label class="monitor-volume"><span class="volume-dial" style={`--level:${app.volume * 270}deg`}><strong>{Math.round(app.volume * 100)}<small>%</small></strong></span><span>Monitor volume</span><input aria-label="Monitor volume" type="range" min="0" max="1" step="0.01" bind:value={app.volume}/></label><div class="delivery-controls"><label>Format<select aria-label="Output format" bind:value={app.format}><option value="mp3">MP3</option><option value="wav16">WAV · 16 bit</option><option value="wav24">WAV · 24 bit</option><option value="wav32">WAV · 32 bit</option></select></label><label>Mastering<select aria-label="Output mastering" bind:value={app.request.mastering_profile}><option value="off">Off</option><option value="streaming">Streaming</option><option value="broadcast">Broadcast</option></select></label></div></div>
+			<div class="monitor-controls"><label class="monitor-volume"><span class="volume-dial" style={`--level:${app.volume * 270}deg`}><strong>{Math.round(app.volume * 100)}<small>%</small></strong></span><span>Monitor volume</span><input aria-label="Monitor volume" type="range" min="0" max="1" step="0.01" bind:value={app.volume}/></label><div class="delivery-controls"><label>Format<select aria-label="Output format" bind:value={app.format}><option value="mp3">MP3</option><option value="wav16">WAV · 16 bit</option><option value="wav24">WAV · 24 bit</option><option value="wav32">WAV · 32 bit</option><option value="mp4">MP4 · 16:9</option></select></label><label>Mastering<select aria-label="Output mastering" bind:value={app.request.mastering_profile}><option value="off">Off</option><option value="streaming">Streaming</option><option value="broadcast">Broadcast</option></select></label></div></div>
 			<div class="output-summary"><div><span>DELIVERY</span><strong>{app.format.toUpperCase()}</strong></div><div><span>MASTERING</span><strong>{masteringLabel}</strong></div></div>
 		</section>
 

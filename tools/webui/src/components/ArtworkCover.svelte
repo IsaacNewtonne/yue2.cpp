@@ -81,8 +81,8 @@
 <dialog class="art-dialog" class:closing bind:this={dialog} aria-label={`Artwork for ${title}`} oncancel={(event) => { event.preventDefault(); void close(); }} onclose={didClose} onclick={(event) => { if (event.target === dialog) void close(); }}>
 	<div class="art-panel">
 		<div class="art-header"><div><span class="art-eyebrow">TRACK ARTWORK</span><h2>{title}</h2></div><button type="button" class="art-close" aria-label="Close artwork" onclick={close}><X size={22} /></button></div>
-		{#if url}<img class="large-art" bind:this={largeImage} src={url} alt={`Full artwork for ${title}`} onerror={() => { failed = true; }} />{/if}
-		<div class="art-footer"><span>Escape or click outside to close</span><button type="button" onclick={download}><Download size={15} /> Save artwork</button></div>
+		{#if url}<button type="button" class="large-art-button" aria-label="Close artwork preview" onclick={close}><img class="large-art" bind:this={largeImage} src={url} alt={`Full artwork for ${title}`} onerror={() => { failed = true; }} /></button>{/if}
+		<div class="art-footer"><span>Click the image, click outside, or press Escape to close</span><button type="button" onclick={download}><Download size={15} /> Save artwork</button></div>
 	</div>
 </dialog>
 
@@ -101,6 +101,7 @@
 	.art-header h2 { font-size: clamp(1rem, 2vw, 1.5rem); font-weight: 600; line-height: 1.3; margin-top: 5px; overflow-wrap: anywhere; }
 	.art-eyebrow { color: var(--accent); font-size: .6rem; letter-spacing: .18em; }
 	.large-art { display: block; width: auto; height: auto; max-width: min(84vw, 1000px); max-height: calc(100dvh - 200px); object-fit: contain; border-radius: 16px; box-shadow: 0 24px 90px #0008; transform-origin: top left; }
+	.large-art-button { display:block; padding:0; border:0; background:transparent; cursor:zoom-out; border-radius:16px; }
 	.art-close, .art-footer button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--bg-card-2); color: var(--fg); border: 1px solid var(--border-strong); border-radius: 12px; padding: 11px; cursor: pointer; flex-shrink: 0; }
 	.art-footer { color: var(--fg-dim); font-size: .72rem; }
 	.art-close:hover, .art-footer button:hover { border-color: var(--accent); }

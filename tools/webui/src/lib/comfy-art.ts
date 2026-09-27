@@ -2,10 +2,10 @@ import type { ArtModels } from './album-types.js';
 
 type NodeSpec = { input?: { required?: Record<string, unknown[]>; optional?: Record<string, unknown[]> } };
 export type NodeInfo = Record<string, NodeSpec>;
-const nodes = ['UnetLoaderGGUF','CLIPLoader','VAELoader','TextEncodeQwenImage21','EmptyLatentImage','KSampler','VAEDecode','SaveImage','LoadImage'];
+const nodes = ['UnetLoaderGGUF','CLIPLoader','VAELoader','TextEncodeQwenImage21','KSampler','VAEDecode','SaveImage','LoadImage'];
 
 async function api(path: string, init?: RequestInit): Promise<Response> {
-	const response = await fetch(`comfy/${path}`, { ...init, signal: AbortSignal.timeout(30000) });
+	const response = await fetch(`comfy/${path}`, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000) });
 	if (!response.ok) throw new Error(`Artwork service: ${response.status} ${(await response.text()).slice(0,350)}`);
 	return response;
 }
@@ -25,7 +25,7 @@ export function availableArtModels(info: NodeInfo): ArtModels {
 export async function checkArtwork(): Promise<ArtModels> { return availableArtModels(await (await api('object_info')).json()); }
 export async function ensureComfyIdle() {
 	const queue = await (await api('queue')).json();
-	if (queue.queue_running?.length || queue.queue_pending?.length) throw new Error('ComfyUI has another queued/running task. Album paused; no other tasks were interrupted.');
+	if (queue.queue_running?.length || queue.queue_pending?.length) throw new Error('ComfyUI has another queued/running task. Wait for it to finish before starting artwork.');
 }
 export async function freeArtworkMemory() {
 	await ensureComfyIdle();
@@ -37,8 +37,7 @@ export function artworkGraph(models: ArtModels, prompt: string, seed: number, pr
 		'2': { class_type: 'CLIPLoader', inputs: { clip_name: models.encoder, type: 'qwen_image', device: 'cpu' } },
 		'3': { class_type: 'VAELoader', inputs: { vae_name: models.vae } },
 		'4': { class_type: 'TextEncodeQwenImage21', inputs: { clip: ['2',0], vae: ['3',0], prompt, negative_prompt: '', resolution: 1024 } },
-		'5': { class_type: 'EmptyLatentImage', inputs: { width: 1024, height: 1024, batch_size: 1 } },
-		'6': { class_type: 'KSampler', inputs: { model: ['1',0], seed, steps: 25, cfg: 1, sampler_name: 'euler', scheduler: 'simple', positive: ['4',0], negative: ['4',1], latent_image: ['5',0], denoise: 1 } },
+		'6': { class_type: 'KSampler', inputs: { model: ['1',0], seed, steps: 25, cfg: reference ? 4 : 1, sampler_name: 'euler', scheduler: 'simple', positive: ['4',0], negative: ['4',1], latent_image: ['4',2], denoise: 1 } },
 		'7': { class_type: 'VAEDecode', inputs: { samples: ['6',0], vae: ['3',0] } },
 		'8': { class_type: 'SaveImage', inputs: { images: ['7',0], filename_prefix: prefix } }
 	};
@@ -56,10 +55,10 @@ export async function artworkResult(id: string): Promise<Blob | null> {
 	const item = history[id];
 	if (!item) {
 		const queue = await (await api('queue')).json();
-		if (![...(queue.queue_running || []), ...(queue.queue_pending || [])].some((entry: unknown[]) => entry[1] === id)) throw new Error('Artwork job missing after ComfyUI restart. Reset the failed stage to retry.');
+		if (![...(queue.queue_running || []), ...(queue.queue_pending || [])].some((entry: unknown[]) => entry[1] === id)) throw new Error('Artwork job missing after ComfyUI restart. Use Retry artwork to start a new image.');
 		return null;
 	}
-	if (item.status?.status_str === 'error') throw new Error(`Artwork failed: ${JSON.stringify(item.status.messages).slice(-500)}. Reset the failed stage to retry.`);
+	if (item.status?.status_str === 'error') throw new Error(`Artwork failed: ${JSON.stringify(item.status.messages).slice(-500)}. Use Retry artwork to start a new image.`);
 	const image = item.outputs?.['8']?.images?.[0];
 	if (!image) { if (item.status?.completed) throw new Error('Artwork job produced no image.'); return null; }
 	return (await api(`view?${new URLSearchParams({ filename: image.filename, subfolder: image.subfolder || '', type: image.type || 'output' })}`)).blob();

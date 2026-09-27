@@ -2,6 +2,7 @@
 export function scrollStrip(node: HTMLElement) {
 	let startX = 0, startScroll = 0, pointer: number | undefined, dragged = false;
 	function down(event: PointerEvent) {
+		if (node.scrollWidth <= node.clientWidth) return;
 		if (event.pointerType !== 'mouse' || event.button !== 0) return;
 		pointer = event.pointerId;
 		startX = event.clientX;
@@ -43,6 +44,11 @@ export function scrollStrip(node: HTMLElement) {
 	}
 	function key(event: KeyboardEvent) {
 		if (event.target !== node) return;
+		if (node.scrollWidth <= node.clientWidth && node.scrollHeight > node.clientHeight) {
+			const offsets: Record<string, number> = { ArrowUp: -120, ArrowDown: 120, Home: -node.scrollHeight, End: node.scrollHeight };
+			if (event.key in offsets) { event.preventDefault(); node.scrollTop += offsets[event.key]; }
+			return;
+		}
 		const offsets: Record<string, number> = { ArrowLeft: -180, ArrowRight: 180, Home: -node.scrollWidth, End: node.scrollWidth };
 		if (!(event.key in offsets)) return;
 		event.preventDefault();

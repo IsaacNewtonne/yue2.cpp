@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { app } from '../lib/state.svelte.js';
+	import { CircleCheck, CircleAlert } from '@lucide/svelte';
 </script>
 
 {#if app.toast}
-	<div class="toast" class:ok={app.toastOk}>
-		<span class="dot"></span>
+	<div class="toast" class:ok={app.toastOk} role="status" aria-live="polite" aria-atomic="true">
+		{#if app.toastOk}<CircleCheck size={18} />{:else}<CircleAlert size={18} />{/if}
 		<span>{app.toast}</span>
 	</div>
 {/if}
@@ -30,18 +31,6 @@
 		z-index: 9999;
 		pointer-events: none;
 		animation: toast-in 0.18s ease-out;
-	}
-	.dot {
-		flex-shrink: 0;
-		width: 0.55rem;
-		height: 0.55rem;
-		border-radius: 50%;
-		background: var(--error);
-		box-shadow: 0 0 10px var(--error);
-	}
-	.toast.ok .dot {
-		background: var(--ok);
-		box-shadow: 0 0 10px var(--ok);
 	}
 	@keyframes toast-in {
 		from {

@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { onMount, tick as svelteTick } from 'svelte';
+	import { decodeAudio } from '../lib/audio-cache.js';
 	import { untrack } from 'svelte';
 	import { WAVEFORM_HEIGHT, WAVEFORM_BINS } from '../lib/config.js';
 	import { app } from '../lib/state.svelte.js';
-	import { putSong } from '../lib/db.js';
+	import { updateSong } from '../lib/db.js';
 	import type { Song } from '../lib/types.js';
 	import {
 		getContext,
@@ -49,6 +50,10 @@
 	let playOffset = 0;
 	let playingId = -1;
 	let audioReady = $state(false);
+	let visible = $state(false);
+	let decodeError = $state('');
+	let loading = $state(false);
+	let retry = $state(0);
 
 	// pointer state
 	let dragging = false;
@@ -72,11 +77,16 @@
 			draw();
 		}
 		audioReady = true;
+		const observer = new IntersectionObserver(entries => { visible = entries[0].isIntersecting; }, {rootMargin:'100px'});
+		observer.observe(canvas);
+		const stop = () => { playing = false; };
+		window.addEventListener('yue2-navigation',stop);
 
 		canvas.addEventListener('touchstart', preventTouch, { passive: false });
 		canvas.addEventListener('touchmove', preventTouch, { passive: false });
 
 		return () => {
+			observer.disconnect(); window.removeEventListener('yue2-navigation',stop); gain?.disconnect();
 			stopPlayback();
 			cancelLoop();
 			canvas.removeEventListener('touchstart', preventTouch);
@@ -86,28 +96,31 @@
 
 	$effect(() => {
 		const selectedAudio = audio ?? song.audio;
+		retry;
 		if (!audioReady || !actx) return;
 		let cancelled = false;
 		const isMasteredAudio = selectedAudio === song.audio;
+		const revision=song.mediaRevision??0;
 		decoded = null;
 		peaks = isMasteredAudio && song.peaks ? song.peaks : new Float32Array();
 		if (isMasteredAudio && song.peaks) dur = song.duration;
-		selectedAudio
-			.arrayBuffer()
-			.then((buf) => actx!.decodeAudioData(buf))
+		draw();
+		if (!playing && (!visible || (peaks.length && retry===0))) return;
+		loading = true; decodeError = '';
+		decodeAudio(selectedAudio)
 			.then((buf) => {
 				if (cancelled) return;
-				decoded = buf;
+				decoded = buf; loading = false;
 				dur = buf.duration;
 				if (isMasteredAudio && !song.peaks) {
 					song.peaks = computePeaks(buf, WAVEFORM_BINS);
 					song.duration = buf.duration;
-					if (song.id != null) putSong($state.snapshot(song));
+					if (song.id != null) void updateSong(song.id, {peaks:song.peaks,duration:song.duration},revision).catch(() => { /* Cache is optional; playback remains usable. */ });
 				}
 				peaks = isMasteredAudio ? (song.peaks ?? computePeaks(buf, WAVEFORM_BINS)) : computePeaks(buf, WAVEFORM_BINS);
 				draw();
 			})
-			.catch(() => {});
+			.catch(() => { if (!cancelled) { loading = false; playing = false; decodeError = 'Audio cannot be decoded. Retry or remove this track from its menu.'; } });
 		return () => {
 			cancelled = true;
 			stopPlayback();
@@ -310,7 +323,7 @@
 
 	function seekTo(norm: number) {
 		if (dur <= 0) return;
-		time = norm * dur;
+		time = Math.max(0, Math.min(1, norm)) * dur;
 		if (source) startPlayback(time);
 		draw();
 	}
@@ -372,15 +385,34 @@
 	function onPointerUp() {
 		dragging = false;
 	}
+	function onKeyDown(event: KeyboardEvent) {
+		if (selectable || event.isComposing) return;
+		if (event.key === ' ') { event.preventDefault(); playing = !playing; return; }
+		if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key) || dur <= 0) return;
+		event.preventDefault();
+		const delta = ['ArrowRight', 'ArrowUp'].includes(event.key) ? 5 : -5;
+		seekTo(event.key === 'Home' ? 0 : event.key === 'End' ? 1 : (time + delta) / dur);
+	}
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
+{#if decodeError}<p role="alert">{decodeError} <button onclick={() => retry++}>Retry audio</button></p>{:else if loading}<p role="status">Loading audio…</p>{/if}
 <canvas
 	bind:this={canvas}
 	class="waveform"
+	role={selectable ? 'img' : 'slider'}
+	tabindex={selectable ? undefined : 0}
+	aria-label={selectable ? `${song.name} range selection; use the range fields for precise editing` : `Seek in ${song.name}`}
+	aria-valuemin={selectable ? undefined : 0}
+	aria-valuemax={selectable ? undefined : dur}
+	aria-valuenow={selectable ? undefined : Math.floor(time)}
+	aria-valuetext={selectable ? undefined : `${Math.floor(time)} of ${Math.floor(dur)} seconds`}
+	onkeydown={onKeyDown}
 	onpointerdown={onPointerDown}
 	onpointermove={onPointerMove}
 	onpointerup={onPointerUp}
+	onpointercancel={onPointerUp}
+	onlostpointercapture={onPointerUp}
 ></canvas>
 
 <style>

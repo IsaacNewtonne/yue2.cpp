@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { decodeAudio } from '../lib/audio-cache.js';
+	import { writePreset, type SavedPreset } from '../lib/saved-presets.js';
 	import { onMount } from 'svelte';
 	import { parse as yamlParse, stringify as yamlStringify } from 'yaml';
 	import {
@@ -12,8 +14,11 @@
 	} from '@lucide/svelte';
 	import { app, toast, setRequest } from '../lib/state.svelte.js';
 	import { example } from '../lib/example.js';
-	import { synthSubmit, pollJob, jobResultTracks, cancelJob, JobTerminalError } from '../lib/api.js';
-	import { putSong, putJobSongs, getAllSongs, saveJob, loadJob, clearJob } from '../lib/db.js';
+	import { synthSubmit, pollJob, jobResultTracks, cancelJob, renderVideo, JobTerminalError, SubmissionRejected } from '../lib/api.js';
+	import { generateTrackArtwork } from '../lib/track-artwork.js';
+	import { cancelQueuedTakes, putSong, updateSong, putJobSongs, getAllSongs, saveJob, loadJob, clearJob } from '../lib/db.js';
+	import { withStudioLock } from '../lib/coordination.js';
+	import { completedTracks } from '../lib/completed-tracks.js';
 	import { buildSparse, clearSection, emptyRequest } from '../lib/fields.js';
 	import { COT_FULL, COT_MELODY, COT_OFF } from '../lib/config.js';
 	import type { Yue2Request, Song } from '../lib/types.js';
@@ -29,18 +34,26 @@
 	import { automaticProfile, applyAutomaticSettings, hasManualSettings } from '../lib/auto-settings.js';
 	import { HIP_HOP_STYLES, MUSIC_STYLE_BY_ID, MUSIC_STYLE_CHOICES, MUSIC_STYLE_DESCRIPTIONS } from '../lib/style-profiles.js';
 	import { scrollStrip } from '../lib/scroll-strip.js';
+	import { styleTooltip } from '../lib/style-tooltip.js';
 	import { prepareGeneration } from '../lib/generation-request.js';
 	import { remixRequest } from '../lib/remix.js';
 	import ProducerControls from './ProducerControls.svelte';
+	import { activity, activityStage } from '../lib/activity.svelte.js';
 	import { applyProducer, cleanProducer, lyricGuidance } from '../lib/producer.js';
 
 	if (!app.request.mastering_profile) app.request.mastering_profile = 'off';
 	let busy = $state(false);
 	let stopTakes = false;
+	let pipelineController: AbortController | undefined;
+	let ownedJobId: string | undefined;
 	let takeProgress = $state('');
 	let fileInput: HTMLInputElement;
 	let lyricsFileInput: HTMLInputElement;
 	let saveFormatOpen = $state(false);
+	let presetName = $state('');
+	let namedPresetOpen = $state(false);
+	async function saveFullPreset() { try { await writePreset({name:presetName.trim(),kind:'studio',data:{ids:[],weights:{},configuration:{request:$state.snapshot(app.request),producer:$state.snapshot(app.producer),format:app.format,automatic,freshComposition,mix:localStorage.getItem('yue2-style-mix-v1') ?? undefined}}}); namedPresetOpen=false; toast('Full setup saved in saved_presets.',4000,true); } catch(error){toast(String(error));} }
+	onMount(()=>{ const load=(event:Event)=>{const preset=(event as CustomEvent<SavedPreset>).detail;if(preset.kind==='studio' && preset.data.configuration){ const c=preset.data.configuration;setRequest(c.request);app.producer=cleanProducer(c.producer);app.format=c.format;app.name=preset.name;if(c.automatic!==undefined)automatic=c.automatic;if(c.freshComposition!==undefined)freshComposition=c.freshComposition;if(c.mix){try{const mix=JSON.parse(c.mix);const music=cleanMix(mix.musicIds,mix.musicWeights,musicStyles.map(([id])=>id),3);musicMix=music.ids;musicMixWeight=music.weights;mixedMusicPrompt=c.request.style;const lyrics=cleanMix(mix.lyricIds,mix.lyricWeights,lyricPresets.map(([id])=>id),3);lyricMix=lyrics.ids;lyricMixWeight=lyrics.weights;musicPromptStrength=Number.isFinite(mix.musicPromptStrength)?Math.max(0,Math.min(100,mix.musicPromptStrength)):100;lyricTopic=typeof mix.topic==='string'?mix.topic:'';}catch{toast('Full settings loaded, but the optional style blend was invalid.');}}toast('Full setup loaded.',3000,true); }};window.addEventListener('yue2-load-blend',load);return ()=>window.removeEventListener('yue2-load-blend',load);});
 	let takeOpen = $state(false);
 	let musicStylePreset = $state('');
 	let styleSearch = $state('');
@@ -123,14 +136,17 @@
 	let lyricModelError = $state('');
 	let lyricDraft = $state('');
 	let lyricController: AbortController | undefined;
+	let modelsBusy = $state(false);
 	async function refreshLyricModels() {
+		if (modelsBusy) return;
+		modelsBusy = true;
 		try {
 			lyricModels = await discoverLyricModels();
 			if (!lyricModels.some((m) => m.name === lyricModel)) lyricModel = lyricModels[0]?.name || '';
 			lyricModelError = lyricModels.length ? '' : 'No Ollama models installed.';
 		} catch (error) {
 			lyricModelError = `Cannot reach local Ollama: ${error instanceof Error ? error.message : String(error)}`;
-		}
+		} finally { modelsBusy = false; }
 	}
 	onMount(() => {
 		const onQuickStyle = (event: Event) => {
@@ -142,7 +158,8 @@
 		return () => { window.removeEventListener('yue2-select-style', onQuickStyle); lyricController?.abort(); };
 	});
 	const lyricPresets = LYRIC_STYLE_CHOICES;
-	async function generateLyrics() {
+	async function generateLyrics() { const result = await withStudioLock(generateLyricsOwned); if (!result.acquired) toast('Another Studio operation is running. Finish it before writing lyrics.'); }
+	async function generateLyricsOwned() {
 		if (!lyricTopic.trim() || lyricBusy || !lyricModel) return;
 		if (app.producer.enabled && app.producer.presence === 0) { toast('Instrumental mode needs no lyrics. Increase vocal presence to write a vocal part.'); return; }
 		if (busy) { toast('Wait for music generation to finish before loading an Ollama model.'); return; }
@@ -156,7 +173,7 @@
 			const blend = selected.map((id, index) => `${index === 0 ? 'PRIMARY STYLE' : 'SECONDARY STYLE'} (${Math.round(100 * (lyricMixWeight[id] ?? 50) / total)}% relative influence):\n${lyricStyleInstructions(id)}`).join('\n\n');
 			const prompt = `You are a professional lyric writer. Write original song lyrics about: ${lyricTopic}\nApply the complete active lyric-style profiles below:\n${blend}\nPreserve the primary style's defining cadence and rhyme behavior. Apply compatible secondary traits at their relative strengths; when rules conflict, the primary style wins. Treat mandatory writing rules as constraints. Silently check the draft against every active Style Compliance Check, revise failed lines, and return only the final lyrics, without the checklist or analysis. Keep musical genre and production separate from lyric construction. Include clear section labels. Avoid filler, cliches, meaningless rhyme, unnatural grammar, and named-artist imitation.`;
 			const musicalContext = app.producer.enabled ? lyricGuidance(cleanProducer(app.producer), app.request.style, app.request.duration) : '';
-			lyricDraft = await writeLyrics(lyricModel, `${prompt}\n\n${musicalContext}`, lyricController.signal);
+			lyricDraft = await writeLyrics(lyricModel, `${prompt}\n\n${musicalContext}`, lyricController.signal,message=>toast(message,9000,true));
 		} catch (error) { toast(error instanceof Error ? error.message : 'Lyric generation failed'); }
 		finally { clearTimeout(timeout); lyricBusy = false; }
 	}
@@ -165,6 +182,8 @@
 	let elapsed = $state('');
 	let elapsedTimer = 0;
 	function startTimer() {
+		activity.running = true;
+		activityStage('Preparing generation', 'Waiting for the next server update');
 		const t0 = Date.now();
 		elapsed = '0:00';
 		clearInterval(elapsedTimer);
@@ -174,6 +193,8 @@
 		}, 1000) as unknown as number;
 	}
 	function stopTimer() {
+		activity.running = false;
+		activityStage('Ready', 'No generation running in this tab');
 		clearInterval(elapsedTimer);
 		elapsedTimer = 0;
 		elapsed = '';
@@ -219,25 +240,25 @@
 	// resume a pending job after page reload, or land a fresh submission.
 	// shared tail of both the onMount resume and the generate path.
 	async function landJob(job: PendingJob) {
+		ownedJobId = job.id;
+		if (!job.submitted) {
+			try { await synthSubmit(job.request, job.format === 'mp4' ? 'mp3' : job.format || 'mp3', job.id); job.submitted = true; await saveJob(job); }
+			catch (error) { if (error instanceof SubmissionRejected) await clearJob(job.id); throw error; }
+		}
 		try { await pollJob(job.id); }
-		catch (error) { if (error instanceof JobTerminalError) clearJob(); throw error; }
-		const tracks = await jobResultTracks(job.id);
+		catch (error) { if (error instanceof JobTerminalError) await clearJob(job.id); throw error; }
+		const tracks = completedTracks(await jobResultTracks(job.id));
 		if (!tracks.length) throw new Error('No audio returned; recovery retained.');
 		const completed: Song[] = [];
 		// Mastered responses carry an adjacent dry take so one song card can A/B them.
 		const now = Date.now();
-		for (let i = 0; i < tracks.length; i++) {
-			let track = tracks[i];
-			let originalAudio: Blob | undefined;
-			const next = tracks[i + 1];
-			if (track.request.mastering_profile === 'off' && next?.request.mastering_profile && next.request.mastering_profile !== 'off') {
-				originalAudio = track.audio;
-				track = next;
-				i++;
-			}
+		for (const track of tracks) {
+			const originalAudio = track.originalAudio;
 			const r = track.request;
 			const song: Song = {
 				takeGroup: job.takeGroup,
+				...(job.musicStyles?.length ? { musicStyles: job.musicStyles } : {}),
+				...(job.lyricStyles?.length ? { lyricStyles: job.lyricStyles } : {}),
 				name: tracks.length > 1 ? `${job.name} ${completed.length + 1}` : job.name,
 				format: r.output_format || job.request.output_format || 'mp3',
 				created: now + completed.length,
@@ -251,27 +272,47 @@
 			};
 			completed.push(song);
 		}
-		await putJobSongs(job.id, completed);
-		clearJob();
+		// Audio is durable in the library before any optional media work starts.
+		const saved = await putJobSongs(job.id, completed);
+		app.songs = (await getAllSongs()).reverse();
+		for (const [index, song] of saved.entries()) {
+			const sourceIndex = song.sourceIndex ?? index;
+			if (job.format === 'mp4' && !song.video && !stopTakes) {
+				try {
+					toast('Music ready. Creating artwork for the MP4…', 6000, true);
+					activityStage('Creating artwork', 'ComfyUI is generating the cover · ETA unavailable');
+					const artworkRevision = song.mediaRevision ?? 0;
+					const cover = song.artwork ?? await generateTrackArtwork(song, job.artworkJobs?.[sourceIndex], async (id) => {
+						job.artworkJobs = { ...job.artworkJobs, [sourceIndex]: id };
+						await saveJob(job);
+					},pipelineController?.signal);
+					if (!song.artwork) Object.assign(song,await updateSong(song.id!, {artwork:cover,artworkJobId:undefined},artworkRevision));
+					activityStage('Rendering MP4', 'Combining artwork and audio · ETA unavailable');
+					const revision = song.mediaRevision ?? 0;
+					const video = await renderVideo(song.audio, cover,pipelineController?.signal,song.videoJobId,async id => { Object.assign(song,await updateSong(song.id!,{videoJobId:id})); });
+					await updateSong(song.id!, {video,format:'mp4',videoJobId:undefined,videoVersion:'mastered'},revision);
+					if(song.videoJobId)void fetch(`job?id=${song.videoJobId}&ack=1`,{method:'POST'}).catch(()=>{});
+				} catch (error) {
+					toast(`MP4 artwork/export failed. Audio kept; use Export video to retry: ${error instanceof Error ? error.message : String(error)}`);
+				}
+			}
+		}
+		await clearJob(job.id);
+		ownedJobId = undefined;
+		void fetch(`job?id=${encodeURIComponent(job.id)}&ack=1`, {method:'POST'}).catch(() => {});
 		app.songs = (await getAllSongs()).reverse();
 		// Scores and audio codes belong to saved tracks, not the next song's input.
 	}
 
 	// on mount: resume polling for a pending job in localStorage.
 	onMount(() => {
-		const job = loadJob();
-		if (job) {
-			busy = true;
-			startTimer();
-			landJob(job)
-				.catch((error) => {
-					toast(`${error instanceof JobTerminalError ? '' : 'Recovery retained: '}${error instanceof Error ? error.message : String(error)}`);
-				})
-				.finally(() => {
-					busy = false;
-					stopTimer();
-				});
-		}
+		void withStudioLock(async () => {
+			let job = await loadJob();
+			if (!job) return;
+			busy = true; pipelineController = new AbortController(); startTimer();
+			try { while (job) { await landJob(job); job = await loadJob(); } }
+			finally { busy = false; ownedJobId = undefined; stopTimer(); }
+		}).catch(error => toast(`Recovery needs attention: ${error instanceof Error ? error.message : String(error)}`));
 	});
 
 	function reset() {
@@ -333,7 +374,7 @@
 		// MP3 or WAV: a song card with the audio alone, transcribed from the
 		// card into a score
 		if (ext === 'mp3' || ext === 'wav') {
-			openAudio(file, ext);
+			void openAudio(file, ext).catch(error => toast(`Audio could not be saved: ${error instanceof Error ? error.message : String(error)}`));
 			return;
 		}
 
@@ -373,6 +414,7 @@
 		const blob = new Blob([await file.arrayBuffer()], {
 			type: ext === 'wav' ? 'audio/wav' : 'audio/mpeg'
 		});
+		const decoded = await decodeAudio(blob);
 		const name = file.name.replace(/\.(mp3|wav)$/i, '') || 'Imported';
 		const song: Song = {
 			name,
@@ -380,7 +422,7 @@
 			created: Date.now(),
 			style: '',
 			seed: 0,
-			duration: 0,
+			duration: decoded.duration,
 			score: '',
 			request: emptyRequest(),
 			audio: blob
@@ -412,11 +454,16 @@
 	// Generate: submit the request, poll until done, land the song card.
 	// The webui resolves the seeds so the stored request reproduces the song.
 	async function generate() {
+		try { const result = await withStudioLock(generateOwned); if (!result.acquired) toast('Another tab is generating or restoring. Finish that operation first.'); }
+		catch (error) { toast(error instanceof Error ? error.message : String(error)); }
+	}
+	async function generateOwned() {
 		if (busy) return;
 		if (lyricBusy) { toast('Wait for lyric generation to finish before generating music.'); return; }
-		if (loadJob()) { toast('A previous job still needs recovery. Reload to recover it before starting another.'); return; }
+		if (await loadJob()) { toast('A previous job still needs recovery. Reload to recover it before starting another.'); return; }
 		busy = true;
 		stopTakes = false;
+		pipelineController = new AbortController();
 		startTimer();
 		try {
 			const planning = !app.remix && freshComposition && app.producer.enabled;
@@ -428,20 +475,41 @@
 			const takeGroup = count > 1 ? crypto.randomUUID() : undefined;
 			const name = app.name || 'Untitled';
 			const format = app.format;
+			// MP4 is a delivery mux, not an audio encoding: the pipeline
+			// renders MP3 and the client muxes video once the track lands.
+			const synthFormat = format === 'mp4' ? 'mp3' : format;
 			const fresh = freshComposition && !app.remix;
-			for (let take = 0; take < count && !stopTakes; take++) {
+			// Snapshot the style blends so each landed song card can name the
+			// styles. Remixes keep the source direction, so they carry none.
+			const musicStyles = app.remix ? undefined : musicMix.map((id) => ({ id, weight: musicMixWeight[id] ?? 100 }));
+			const lyricStyles = app.remix ? undefined : lyricMix.map((id) => ({ id, weight: lyricMixWeight[id] ?? 100 }));
+			const planned: PendingJob[] = [];
+			for (let take = 0; take < count; take++) {
 				takeProgress = count > 1 ? `Take ${take + 1} of ${count}` : '';
 				const req = prepareGeneration(base, fresh);
+				activityStage('Preparing generation', takeProgress || 'Waiting for the next server update');
 				if (count > 1) { req.lm_batch_size = 1; req.synth_batch_size = 1; }
-				const jobId = await synthSubmit(req, format);
-				const job: PendingJob = { id: jobId, name: count > 1 ? `${name} · Take ${take + 1}` : name, request: req, takeGroup };
-				saveJob(job);
+				const jobId = crypto.randomUUID().replaceAll('-', '');
+				const job: PendingJob = { queueOrder: Date.now()+take, id: jobId, name: count > 1 ? `${name} · Take ${take + 1}` : name, request: req, takeGroup, format, musicStyles: musicStyles?.length ? musicStyles : undefined, lyricStyles: lyricStyles?.length ? lyricStyles : undefined };
+				await saveJob(job);
+				planned.push(job);
+			}
+			for (const job of planned) {
+				if (stopTakes) break;
+				const jobId=job.id, req=job.request;
+				takeProgress = job.name;
+				ownedJobId = jobId;
+				await synthSubmit(req, synthFormat, jobId);
+				job.submitted = true;
+				await saveJob(job);
 				if (stopTakes) await cancelJob(jobId);
 				await landJob(job);
 			}
 		} catch (e: unknown) {
+			if (e instanceof SubmissionRejected && ownedJobId) await clearJob(ownedJobId);
 			toast(e instanceof Error ? e.message : String(e));
 		} finally {
+			ownedJobId = undefined;
 			takeProgress = '';
 			busy = false;
 			stopTimer();
@@ -470,9 +538,11 @@
 	// cancel the active pipeline job
 	async function cancelPipeline() {
 		stopTakes = true;
+		pipelineController?.abort();
+		await cancelQueuedTakes();
+		toast('Stopping remaining takes and owned video work. Finished audio is kept. Running artwork can be reconnected from its card.');
 		try {
-			const job = loadJob();
-			if (job) await cancelJob(job.id);
+			if (ownedJobId) await cancelJob(ownedJobId);
 		} catch {}
 	}
 
@@ -504,6 +574,7 @@
 </script>
 
 <form class="request-form" class:is-generating={busy} onsubmit={(e) => e.preventDefault()}>
+	<div class="creation-heading"><h1>Create your song</h1><p>From a simple idea to a full track.</p></div>
 	<input
 		type="file"
 		accept=".json,.yml,.yaml,.mp3,.wav"
@@ -528,7 +599,7 @@
 				<button
 					type="button"
 					class="tool-btn"
-					onclick={() => (saveFormatOpen = true)}
+					onclick={() => (namedPresetOpen = true)}
 					title="Save prompt as JSON or YAML"
 				>
 					<Download size={13} /><span>Save preset</span>
@@ -561,7 +632,7 @@
    </div>
    <div class="preset-column"><label class="field"><span class="field-name">Style preset <small>{styleSearch.trim() ? `${visibleMusicStyles.length} / ` : ''}{HIP_HOP_STYLES.length} styles</small></span><input class="style-search" type="search" aria-label="Find a hip-hop style" placeholder="Search styles…" bind:value={styleSearch}/></label>
    <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable region supports arrows, Home and End through scrollStrip.) -->
-   <div class="preset-discovery" use:scrollStrip role="region" tabindex="0" aria-label="Hip-hop style profiles">{#each visibleMusicStyles as style}<button type="button" class="style-tile" class:chosen={musicMix.includes(style.id)} aria-pressed={musicMix.includes(style.id)} onclick={() => addMusicStyle(style.id)} title={`${style.name} · ${style.family}`}><img src={style.thumbnail} alt="" loading="lazy" /><span class="style-tile-copy"><strong>{style.name}</strong><small>{style.family}</small></span><span class="style-tile-add">{musicMix.includes(style.id) ? "✓" : "+"}</span></button>{/each}</div>
+   <div class="preset-discovery" use:scrollStrip role="region" tabindex="0" aria-label="Hip-hop style profiles">{#each visibleMusicStyles as style}<button type="button" class="style-tile" class:chosen={musicMix.includes(style.id)} aria-pressed={musicMix.includes(style.id)} onclick={() => addMusicStyle(style.id)} use:styleTooltip={style}><img src={style.thumbnail} alt="" loading="lazy" /><span class="style-tile-copy"><strong>{style.name}</strong><small>{style.family}</small></span><span class="style-tile-add">{musicMix.includes(style.id) ? "✓" : "+"}</span></button>{/each}</div>
    <small class="help-text">Drag or scroll to explore all styles.</small>
    {#if visibleMusicStyles.length === 0}<p class="help-text">No matching styles. Try another search.</p>{/if}
    </div>
@@ -591,6 +662,7 @@
    </details>
 		</div>
 	</section>
+	<ProducerControls disabled={busy || !!app.remix || !freshComposition} />
 	<details class="card words-card" id="lyrics-editor">
 		<summary class="card-head"><h3><span class="step-number">02</span> Lyrics &amp; writing</h3><span class="section-meta">{app.request.lyrics ? "Lyrics ready · click to edit" : "Add lyrics or write with AI"}</span></summary><div class="lyrics-content"><div class="card-head">
 			<h3><span class="step-number">02</span> Lyrics &amp; writing</h3>
@@ -624,7 +696,7 @@
 				<option value="">Select an installed model</option>
 				{#each lyricModels as model}<option value={model.name}>{model.name}</option>{/each}
 			</select></label>
-			<button type="button" onclick={refreshLyricModels} disabled={lyricBusy}>Refresh models</button>
+			<button type="button" onclick={refreshLyricModels} disabled={lyricBusy || modelsBusy} aria-busy={modelsBusy}>{modelsBusy ? 'Refreshing models…' : 'Refresh models'}</button>
 			{#if lyricModelError}<p role="status">{lyricModelError}</p>{/if}
 			{#if lyricBusy}<button type="button" onclick={() => lyricController?.abort()}>Cancel lyric request</button>{/if}
 			{#if lyricDraft}
@@ -653,7 +725,7 @@
 		</details>
 	</div></details>
 
-	<ProducerControls disabled={busy || !!app.remix || !freshComposition} />
+
 	{#if takeProgress}<p role="status">{takeProgress} · completed takes are saved in your library.</p>{/if}
 	<section class="card" id="arrangement-workbench">
 		<div class="card-head">
@@ -753,8 +825,8 @@
   {:else}<p class="remix-hint">To vary a saved song with the same seed, choose its Remix button.</p>{/if}
   <div class="engine-mode" aria-label="Production settings mode"><button type="button" class:selected={automatic} aria-pressed={automatic} onclick={() => setAutomatic(true)}>Automatic</button><button type="button" class:selected={!automatic} aria-pressed={!automatic} onclick={() => setAutomatic(false)}>Manual control</button></div>
   <details class="engine-options"><summary>Output, mastering &amp; profile details</summary>  <div class="profile-title"><Sparkles size={19}/><div><strong>{automatic ? profile.name : 'Your custom settings'}</strong><p>{automatic ? 'Follows your active sound directions' : 'Sampling and render controls are unlocked below'}</p></div></div>
-  {#if automatic}<div class="engine-metrics"><div><span>COMPOSITION</span><strong>{profile.scoreTemperature.toFixed(2)}</strong><small>score temperature</small></div><div><span>RENDER</span><strong>{profile.settings.steps}<em> steps</em></strong><small>model default</small></div><div><span>OUTPUT</span><strong>{app.format === 'mp3' ? '320' : app.format.slice(3)}<em>{app.format === 'mp3' ? ' kbps' : ' bit'}</em></strong><small>{app.format === 'mp3' ? 'MP3 encoding' : 'WAV encoding'}</small></div></div>{/if}
-  <label class="engine-format">Delivery format<select aria-label="Delivery format" bind:value={app.format}><option value="mp3">MP3 · 320 kbps in Auto</option><option value="wav16">WAV · 16 bit</option><option value="wav24">WAV · 24 bit</option><option value="wav32">WAV · 32 bit float</option></select></label>
+  {#if automatic}<div class="engine-metrics"><div><span>COMPOSITION</span><strong>{profile.scoreTemperature.toFixed(2)}</strong><small>score temperature</small></div><div><span>RENDER</span><strong>{profile.settings.steps}<em> steps</em></strong><small>model default</small></div><div><span>OUTPUT</span><strong>{app.format === 'mp3' ? '320' : app.format === 'mp4' ? '16:9' : app.format.slice(3)}<em>{app.format === 'mp3' ? ' kbps' : app.format === 'mp4' ? ' video' : ' bit'}</em></strong><small>{app.format === 'mp3' ? 'MP3 encoding' : app.format === 'mp4' ? 'MP4 video' : 'WAV encoding'}</small></div></div>{/if}
+  <label class="engine-format">Delivery format<select aria-label="Delivery format" bind:value={app.format}><option value="mp3">MP3 · 320 kbps in Auto</option><option value="wav16">WAV · 16 bit</option><option value="wav24">WAV · 24 bit</option><option value="wav32">WAV · 32 bit float</option><option value="mp4">MP4 · 16:9 video</option></select></label>
   <label class="engine-format">Automatic mastering<select aria-label="Automatic mastering" bind:value={app.request.mastering_profile} title="Optional EBU R128 loudness normalization with a true-peak ceiling. It sets delivery level; it does not repair mix problems."><option value="off">Off · preserve current output</option><option value="streaming">Streaming · −14 LUFS, −1 dBTP</option><option value="broadcast">Broadcast · −23 LUFS, −1 dBTP</option></select></label>
   <p class="engine-note">{automatic ? 'Style-guided composition with the model’s stable audio defaults. A starting point you can fine-tune, not a guarantee of the best take.' : 'Imported and reused settings are preserved. Switch to Automatic to apply the current style profile.'}</p></details>
  </section>
@@ -864,6 +936,7 @@
 						<option value="wav16">WAV16</option>
 						<option value="wav24">WAV24</option>
 						<option value="wav32">WAV32</option>
+						<option value="mp4">MP4</option>
 					</select></label
 				>
 			</div>
@@ -886,6 +959,7 @@
 			type="button"
 			class="generate-btn"
 			class:running={busy}
+			aria-busy={busy}
 			disabled={busy}
 			onclick={askTake}
 			title="Run the full pipeline: score, semantic codes, flow matching, VAE"
@@ -930,7 +1004,11 @@
 	{/snippet}
 </Dialog>
 
-<Dialog bind:open={saveFormatOpen} title="Save format">
+<Dialog bind:open={namedPresetOpen} title="Save full preset">
+ {#snippet body()}<label>Preset name<input bind:value={presetName} maxlength="100" /></label><p>Saves planner, voices, sound, lyrics and output settings to saved_presets.</p>{/snippet}
+ {#snippet actions(close)}<DialogButton onclick={close}>Cancel</DialogButton><DialogButton onclick={() => {close();saveFormatOpen=true;}}>Export request file</DialogButton><DialogButton onclick={saveFullPreset}>Save full preset</DialogButton>{/snippet}
+</Dialog>
+<Dialog bind:open={saveFormatOpen} title="Export request file">
 	{#snippet actions(close)}
 		<DialogButton onclick={close}>Cancel</DialogButton>
 		<DialogButton
