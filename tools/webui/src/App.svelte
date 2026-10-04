@@ -5,6 +5,7 @@
 	import './glass-studio.css';
 	import './theme-readability.css';
 	import './interactions.css';
+	import './theme-identities.css';
 	import { app, retrySettingsStorage, toast } from './lib/state.svelte.js';
 	import { props } from './lib/api.js';
 	import { getAllSongs } from './lib/db.js';
@@ -73,7 +74,7 @@
 		if (app.remix) focusSection('engine-workbench');
 	});
 	$effect(() => { const warn = (event: Event) => toast((event as CustomEvent<string>).detail,10000); window.addEventListener('yue2-recovery-warning',warn); return () => window.removeEventListener('yue2-recovery-warning',warn); });
-	// studio theme is dark-only: pin the class, keep app.dark for persistence
+	// Keep the legacy class for component compatibility; each theme owns its color scheme.
 	$effect(() => {
 		document.documentElement.classList.add('dark');
 		document.documentElement.classList.remove('light');
