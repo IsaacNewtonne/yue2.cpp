@@ -4,12 +4,12 @@ import type { MusicStyleProfile } from './style-profiles.js';
 export function styleTooltip(node: HTMLElement, initial: MusicStyleProfile) {
 	let style = initial;
 	let popup: HTMLDivElement | undefined;
-	let timer: ReturnType<typeof setTimeout> | undefined;
+
 	const id = `style-help-${crypto.randomUUID()}`;
 	function hide() {
-		clearTimeout(timer);
+
 		popup?.remove(); popup = undefined;
-		node.removeAttribute('aria-describedby');
+		node.setAttribute('aria-expanded', 'false');
 	}
 	function position() {
 		if (!popup) return;
@@ -24,10 +24,12 @@ export function styleTooltip(node: HTMLElement, initial: MusicStyleProfile) {
 		popup.style.top = `${Math.max(12, Math.min(box.top, window.innerHeight - height - 12))}px`;
 	}
 	function show() {
-		clearTimeout(timer);
+
 		if (popup) return;
 		popup = document.createElement('div');
-		popup.className = 'style-explanation'; popup.id = id; popup.setAttribute('role', 'tooltip');
+		popup.className = 'style-explanation'; popup.id = id; popup.popover = 'manual'; popup.setAttribute('role', 'dialog'); popup.setAttribute('aria-label', `About ${style.name}`);
+        popup.addEventListener('toggle', () => node.setAttribute('aria-expanded', String(!!popup?.matches(':popover-open'))));
+        const close = document.createElement('button'); close.type = 'button'; close.className = 'style-explanation-close'; close.textContent = '×'; close.setAttribute('aria-label', 'Close style description'); close.addEventListener('click', () => { hide(); node.focus(); }); popup.append(close);
 		function append(tag: string, text: string, className = '') {
 			const el = document.createElement(tag); el.textContent = text; el.className = className; popup!.append(el);
 		}
@@ -41,23 +43,32 @@ export function styleTooltip(node: HTMLElement, initial: MusicStyleProfile) {
 			const value = sections.get(key);
 			if (value) { append('strong', label); append('p', value); }
 		}
-		popup.addEventListener('mouseenter', () => clearTimeout(timer));
-		popup.addEventListener('mouseleave', leave);
-		document.body.append(popup); node.setAttribute('aria-describedby', id); position();
+		document.body.append(popup); popup.showPopover(); node.setAttribute('aria-expanded', 'true'); position();
 	}
-	function enter() { clearTimeout(timer); timer = setTimeout(show, 200); }
-	function leave() { clearTimeout(timer); timer = setTimeout(hide, 180); }
-	function key(event: KeyboardEvent) { if (event.key === 'Escape') hide(); }
-	node.addEventListener('mouseenter', enter); node.addEventListener('mouseleave', leave);
-	node.addEventListener('focus', show); node.addEventListener('blur', leave);
-	document.addEventListener('keydown', key);
-	window.addEventListener('resize', hide); window.addEventListener('scroll', position, true);
+	function click() {
+        if (popup?.matches(':popover-open')) { hide(); return; }
+        hide(); window.dispatchEvent(new Event('yue2-style-info')); show();
+    }
+    node.setAttribute('aria-haspopup', 'dialog');
+    node.setAttribute('aria-controls', id);
+    node.setAttribute('aria-expanded', 'false');
+    function outside(event: PointerEvent) { if (popup && event.target instanceof Node && !node.contains(event.target) && !popup.contains(event.target)) hide(); }
+    function key(event: KeyboardEvent) { if (event.key === 'Escape' && popup) { hide(); node.focus(); } }
+    node.addEventListener('click', click);
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', key);
+    window.addEventListener('yue2-navigation', hide);
+    window.addEventListener('yue2-style-info', hide);
+    window.addEventListener('resize', position); window.addEventListener('scroll', position, true);
 	return {
 		update(next: MusicStyleProfile) { style = next; },
 		destroy() {
-			hide(); node.removeEventListener('mouseenter', enter); node.removeEventListener('mouseleave', leave);
-			node.removeEventListener('focus', show); node.removeEventListener('blur', leave);
-			document.removeEventListener('keydown', key); window.removeEventListener('resize', hide); window.removeEventListener('scroll', position, true);
+			hide(); node.removeEventListener('click', click);
+            document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', key);
+            window.removeEventListener('yue2-style-info', hide);
+            window.removeEventListener('yue2-navigation', hide);
+            window.removeEventListener('resize', position); window.removeEventListener('scroll', position, true);
+            node.removeAttribute('aria-haspopup'); node.removeAttribute('aria-controls'); node.removeAttribute('aria-expanded');
 		}
 	};
 }

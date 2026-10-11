@@ -17,6 +17,7 @@
 #include "timer.h"
 
 #include <cstdio>
+#include <functional>
 #include <cstring>
 #include <vector>
 
@@ -66,7 +67,8 @@ static bool yue2_generate(Qwen3LM *                             lm,
                           Yue2Phase                             phase,
                           std::vector<Yue2Generation> *         out,
                           bool (*cancelled)(void *) = nullptr,
-                          void * cancel_data        = nullptr) {
+                          void * cancel_data        = nullptr,
+                          const std::function<void(int,int)> & progress = {}) {
     const int B       = (int) prefixes.size();
     const int context = kv->cfg.max_seq_len;
     bool      guided  = cfg_scale != 1.0f;
@@ -170,6 +172,7 @@ static bool yue2_generate(Qwen3LM *                             lm,
         }
         if ((step % 100) == 0) {
             fprintf(stderr, "[AR] %s %d/%d\n", label, step, s.max_tokens);
+            if (progress) progress(step, s.max_tokens);
         }
         qw3lm_forward_batch(lm, kv, tokens.data(), kv_sets.data(), N, batched.data(), row0, rows);
         for (int i = 0; i < B; i++) {

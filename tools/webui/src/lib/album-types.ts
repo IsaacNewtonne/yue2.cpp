@@ -7,6 +7,8 @@ export interface AlbumTrack {
 	artDirection: string;
 	jobId?: string;
 	songId?: number;
+	libraryKey?: string;
+	linked?: boolean;
 	artJobId?: string;
 	videoJobId?: string;
 	artDone?: boolean;

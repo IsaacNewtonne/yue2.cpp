@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Volume2, AudioWaveform, Wifi, WifiOff, House, Music2, Library, SlidersHorizontal, Settings, Mic2, Sparkles } from '@lucide/svelte';
+	import { AudioWaveform, Wifi, WifiOff, House, Music2, Library, SlidersHorizontal, Settings, Mic2, Sparkles, Disc3 } from '@lucide/svelte';
 	import './studio.css';
 	import './reference-studio.css';
 	import './glass-studio.css';
@@ -11,14 +11,18 @@
 	import { getAllSongs } from './lib/db.js';
 	import { PROPS_POLL_MS } from './lib/config.js';
 	import RequestForm from './components/RequestForm.svelte';
+	import AlbumNavCard from './components/AlbumNavCard.svelte';
+	import {listAlbums} from './lib/album-db.js';
+	import type {Album} from './lib/album-types.js';
 	import Albums from './components/Albums.svelte';
 	import SongList from './components/SongList.svelte';
 	import StudioRail from './components/StudioRail.svelte';
+	import ReactiveSpeaker from './components/ReactiveSpeaker.svelte';
 	import Toast from './components/Toast.svelte';
 	import SavedPresets from './components/SavedPresets.svelte';
 
-	type Theme = 'studio' | 'dark' | 'cyberpunk' | 'colorful' | 'mint' | 'burnt-orange';
-	type StudioPage = 'create' | 'library';
+	type Theme = 'studio' | 'dark' | 'cyberpunk' | 'colorful' | 'mint' | 'burnt-orange' | 'orange';
+	type StudioPage = 'create' | 'library' | 'albums';
 	function initialTheme(): Theme {
 		try {
 			if (!localStorage.getItem('yue2-glass-introduced')) {
@@ -27,11 +31,15 @@
 				return 'studio';
 			}
 			const saved = localStorage.getItem('yue2-theme');
-			return ['studio', 'dark', 'cyberpunk', 'colorful', 'mint', 'burnt-orange'].includes(saved || '') ? saved as Theme : 'studio';
+			return ['studio', 'dark', 'cyberpunk', 'colorful', 'mint', 'burnt-orange', 'orange'].includes(saved || '') ? saved as Theme : 'studio';
 		} catch { return 'studio'; }
 	}
 	let theme = $state<Theme>(initialTheme());
 	let currentPage = $state<StudioPage>('create');
+    let albums=$state<Album[]>([]),selectedAlbumId=$state('');
+    function openLibrary(){currentPage='library';}
+    function openAlbum(id=''){selectedAlbumId=id;currentPage='albums';}
+    $effect(()=>{let disposed=false,revision=0;const refresh=async()=>{const current=++revision;try{const next=await listAlbums();if(!disposed&&current===revision)albums=next;}catch{if(!disposed)toast('Albums could not be loaded.');}};void refresh();window.addEventListener('yue2-albums-changed',refresh);return()=>{disposed=true;window.removeEventListener('yue2-albums-changed',refresh);};});
 	function setTheme(next: Theme) {
 		theme = next;
 		try { localStorage.setItem('yue2-theme', next); } catch { /* Theme still works without storage. */ }
@@ -102,8 +110,8 @@
 			{#if app.props}<Wifi size={13} />{:else}<WifiOff size={13} />{/if}<span>{statusText}</span><span class="status-chevron">⌄</span>
 		</div>
 		<div class="topbar-spacer"></div>
-		<div class="volume"><Volume2 size={15} /><input type="range" min="0" max="1" step="0.01" value={app.volume} oninput={onVolume} aria-label="Playback volume" /></div>
-		<label class="topbar-theme"><span class="sr-only">Color theme</span><select aria-label="Color theme" value={theme} onchange={e => setTheme(e.currentTarget.value as Theme)}><option value="studio">Studio Glass</option><option value="mint">Mint</option><option value="dark">Dark</option><option value="cyberpunk">Cyberpunk</option><option value="colorful">Colorful</option><option value="burnt-orange">Burnt Orange</option></select></label>
+		<div class="volume"><ReactiveSpeaker compact /><input type="range" min="0" max="1" step="0.01" value={app.volume} oninput={onVolume} aria-label="Playback volume" /></div>
+		<label class="topbar-theme"><span class="sr-only">Color theme</span><select aria-label="Color theme" value={theme} onchange={e => setTheme(e.currentTarget.value as Theme)}><option value="studio">Studio Glass</option><option value="mint">Mint</option><option value="dark">Dark</option><option value="cyberpunk">Cyberpunk</option><option value="colorful">Colorful</option><option value="orange">Orange Voltage</option><option value="burnt-orange">Classic</option></select></label>
   <a class="settings-shortcut" href="#settings" onclick={() => focusSection('settings')} aria-label="Studio settings"><Settings size={17} /></a>
 	</header>
 
@@ -112,13 +120,15 @@
 			<nav class="side-nav" aria-label="Main navigation">
 				<button type="button" onclick={() => { currentPage = 'create'; requestAnimationFrame(() => document.querySelector('.center-scroll')?.scrollTo({ top: 0, behavior: 'smooth' })); }}><House size={17} /> Home</button>
 				<button class:active={currentPage === 'create'} type="button" onclick={() => { currentPage = 'create'; }}><Music2 size={17} /> Create</button>
-				<button class:active={currentPage === 'library'} type="button" onclick={() => { currentPage = 'library'; }}><Library size={17} /> Library <span class="side-count">{app.songs.length}</span></button>
-				<button type="button" onclick={() => { currentPage='library'; requestAnimationFrame(()=>document.getElementById('albums')?.scrollIntoView()); }}>Albums</button>
+				<button class:active={currentPage === 'library'} type="button" onclick={() => { openLibrary(); }}><Library size={17} /> Library <span class="side-count">{app.songs.length}</span></button>
+				<button class:active={currentPage==='albums'} type="button" onclick={() => openAlbum()}><Disc3 size={17}/> Albums</button>
 				<button type="button" onclick={() => focusSection('music-workbench')}><Sparkles size={17} /> Presets</button>
 				<button type="button" onclick={() => focusSection('lyrics-editor')}><Mic2 size={17} /> Lyrics</button>
 				<button type="button" onclick={() => focusSection('engine-workbench')}><SlidersHorizontal size={17} /> Mix &amp; Render</button>
 				<a href="#settings" onclick={() => focusSection('settings')}><Settings size={17} /> Settings</a>
 			</nav>
+            <section class="sidebar-albums" aria-label="Your albums"><p class="sidebar-label">YOUR ALBUMS · {albums.length}</p>
+            {#each albums as album (album.id)}<AlbumNavCard {album} active={currentPage==='albums'&&selectedAlbumId===album.id} onselect={()=>openAlbum(album.id)}/>{:else}<p class="album-hint">Create your first album from the Albums tab.</p>{/each}</section>
 			<SavedPresets onload={(preset) => {
                 focusSection(preset.kind === 'music' ? 'music-workbench' : 'lyrics-editor');
                 requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('yue2-load-blend', { detail: preset })));
@@ -135,24 +145,29 @@
 
 			<main class="workspace-main" style:display={currentPage === 'create' ? undefined : 'none'}>
 				<div class="center-scroll" id="create"><RequestForm /></div>
-				{#if currentPage === 'create'}<StudioRail onOpenLibrary={() => currentPage = 'library'} />{/if}
+				{#if currentPage === 'create'}<StudioRail onOpenLibrary={() => openLibrary()} />{/if}
 			</main>
 		{#if currentPage === 'library'}
 			<div class="library-workspace">
 				<main class="library-main">
-					<section class="library-page-head"><div><p class="sidebar-label">YOUR LOCAL COLLECTION</p><h1>Library</h1><p>{app.songs.length} track{app.songs.length === 1 ? '' : 's'} saved on this device</p></div><button type="button" onclick={() => currentPage = 'create'}><Music2 size={15} /> Create a track</button></section>
-					<Albums />
+					<section class="library-page-head"><div><p class="sidebar-label">YOUR LOCAL COLLECTION</p><h1>Library</h1><p>{app.songs.length} track{app.songs.length===1?'':'s'} saved on this device</p></div><button type="button" onclick={() => currentPage = 'create'}><Music2 size={15} /> Create a track</button></section>
+
 					<SongList showLog={false} />
 				</main>
-				<div class="library-rail"><StudioRail onOpenLibrary={() => currentPage = 'library'} showGenerated={false} /></div>
+				<div class="library-rail"><StudioRail onOpenLibrary={() => openLibrary()} showGenerated={false} /></div>
 			</div>
 		{/if}
+		<div class="library-workspace" style:display={currentPage==='albums'?undefined:'none'}>
+ <main class="library-main"><Albums bind:selectedId={selectedAlbumId}/></main>
+ {#if currentPage==='albums'}<div class="library-rail"><StudioRail onOpenLibrary={openLibrary} showGenerated={false}/></div>{/if}
+ </div>
 	</div>
 </div>
 
 <Toast />
 
 <style>
+ .sidebar-albums{margin-top:1rem;padding-top:1rem;border-top:1px solid #ffffff20}.album-hint{font-size:.75rem;line-height:1.5;opacity:.75;padding:.3rem}.sidebar-albums .sidebar-label{margin-bottom:.6rem}
 	:global(:root) {
 		--bg: #08090d;
 		--bg-panel: #0e1016;

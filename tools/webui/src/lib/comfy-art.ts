@@ -2,7 +2,7 @@ import type { ArtModels } from './album-types.js';
 
 type NodeSpec = { input?: { required?: Record<string, unknown[]>; optional?: Record<string, unknown[]> } };
 export type NodeInfo = Record<string, NodeSpec>;
-const nodes = ['UnetLoaderGGUF','CLIPLoader','VAELoader','TextEncodeQwenImage21','KSampler','VAEDecode','SaveImage','LoadImage'];
+const nodes = ['UnetLoaderGGUF','CLIPLoader','VAELoader','TextEncodeQwenImage21','KSampler','VAEDecode','SaveImage','LoadImage','EmptyImage','VAEEncode'];
 
 async function api(path: string, init?: RequestInit): Promise<Response> {
 	const response = await fetch(`comfy/${path}`, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000) });
@@ -36,8 +36,11 @@ export function artworkGraph(models: ArtModels, prompt: string, seed: number, pr
 		'1': { class_type: 'UnetLoaderGGUF', inputs: { unet_name: models.diffusion } },
 		'2': { class_type: 'CLIPLoader', inputs: { clip_name: models.encoder, type: 'qwen_image', device: 'cpu' } },
 		'3': { class_type: 'VAELoader', inputs: { vae_name: models.vae } },
-		'4': { class_type: 'TextEncodeQwenImage21', inputs: { clip: ['2',0], vae: ['3',0], prompt, negative_prompt: '', resolution: 1024 } },
-		'6': { class_type: 'KSampler', inputs: { model: ['1',0], seed, steps: 25, cfg: reference ? 4 : 1, sampler_name: 'euler', scheduler: 'simple', positive: ['4',0], negative: ['4',1], latent_image: ['4',2], denoise: 1 } },
+		'4': { class_type: 'TextEncodeQwenImage21', inputs: { clip: ['2',0], vae: ['3',0], prompt, negative_prompt: 'lyric sheet, verses, paragraphs, captions, subtitles, watermark, logo, tracklist, extra words, misspelled title, text-only background, flat background, portrait canvas', resolution: 1024 } },
+		// Let the installed Qwen VAE create its own 64-channel latent format.
+		'5': { class_type: 'EmptyImage', inputs: { width: 1280, height: 720, batch_size: 1, color: 0 } },
+		'10': { class_type: 'VAEEncode', inputs: { pixels: ['5',0], vae: ['3',0] } },
+		'6': { class_type: 'KSampler', inputs: { model: ['1',0], seed, steps: 25, cfg: reference ? 4 : 1, sampler_name: 'euler', scheduler: 'simple', positive: ['4',0], negative: ['4',1], latent_image: ['10',0], denoise: 1 } },
 		'7': { class_type: 'VAEDecode', inputs: { samples: ['6',0], vae: ['3',0] } },
 		'8': { class_type: 'SaveImage', inputs: { images: ['7',0], filename_prefix: prefix } }
 	};

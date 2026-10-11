@@ -214,7 +214,7 @@ export async function importLibrary(archive: Blob): Promise<{ songs: Song[]; set
 			const parsed = JSON.parse(raw);
 			if (key === 'yue2-style-mix-v1' ? !object(parsed) : !Array.isArray(parsed)) throw new Error(`Invalid backup setting: ${key}`);
 		}
-		if (key === 'yue2-theme' && !['studio','dark','mint','cyberpunk','colorful','burnt-orange'].includes(raw)) throw new Error('Invalid backup theme.');
+		if (key === 'yue2-theme' && !['studio','dark','mint','cyberpunk','colorful','burnt-orange','orange'].includes(raw)) throw new Error('Invalid backup theme.');
 		if (key === 'yue2-production-mode' && !['auto','manual'].includes(raw)) throw new Error('Invalid backup production mode.');
 		settings[key] = raw;
 	}

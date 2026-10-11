@@ -131,6 +131,12 @@
 	}
 	let lyricTopic = $state('');
 	let lyricBusy = $state(false);
+	let lyricAssistantEnabled = $state(false);
+	function setLyricAssistant(enabled: boolean) {
+		lyricAssistantEnabled = enabled;
+		try { localStorage.setItem('yue2-lyric-assistant-enabled', String(enabled)); } catch { /* Preference is optional. */ }
+		if (enabled) void refreshLyricModels();
+	}
 	let lyricModels = $state<LyricModel[]>([]);
 	let lyricModel = $state('');
 	let lyricModelError = $state('');
@@ -138,7 +144,7 @@
 	let lyricController: AbortController | undefined;
 	let modelsBusy = $state(false);
 	async function refreshLyricModels() {
-		if (modelsBusy) return;
+		if (!lyricAssistantEnabled || modelsBusy) return;
 		modelsBusy = true;
 		try {
 			lyricModels = await discoverLyricModels();
@@ -154,13 +160,14 @@
 			if (musicDescriptions[id]) selectQuickStyle(id);
 		};
 		window.addEventListener('yue2-select-style', onQuickStyle);
-		void refreshLyricModels();
+		try { lyricAssistantEnabled = localStorage.getItem('yue2-lyric-assistant-enabled') === 'true'; } catch { /* Default to off. */ }
+		if (lyricAssistantEnabled) void refreshLyricModels();
 		return () => { window.removeEventListener('yue2-select-style', onQuickStyle); lyricController?.abort(); };
 	});
 	const lyricPresets = LYRIC_STYLE_CHOICES;
 	async function generateLyrics() { const result = await withStudioLock(generateLyricsOwned); if (!result.acquired) toast('Another Studio operation is running. Finish it before writing lyrics.'); }
 	async function generateLyricsOwned() {
-		if (!lyricTopic.trim() || lyricBusy || !lyricModel) return;
+		if (!lyricAssistantEnabled || !lyricTopic.trim() || lyricBusy || !lyricModel) return;
 		if (app.producer.enabled && app.producer.presence === 0) { toast('Instrumental mode needs no lyrics. Increase vocal presence to write a vocal part.'); return; }
 		if (busy) { toast('Wait for music generation to finish before loading an Ollama model.'); return; }
 		lyricBusy = true;
@@ -632,7 +639,7 @@
    </div>
    <div class="preset-column"><label class="field"><span class="field-name">Style preset <small>{styleSearch.trim() ? `${visibleMusicStyles.length} / ` : ''}{HIP_HOP_STYLES.length} styles</small></span><input class="style-search" type="search" aria-label="Find a hip-hop style" placeholder="Search styles…" bind:value={styleSearch}/></label>
    <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable region supports arrows, Home and End through scrollStrip.) -->
-   <div class="preset-discovery" use:scrollStrip role="region" tabindex="0" aria-label="Hip-hop style profiles">{#each visibleMusicStyles as style}<button type="button" class="style-tile" class:chosen={musicMix.includes(style.id)} aria-pressed={musicMix.includes(style.id)} onclick={() => addMusicStyle(style.id)} use:styleTooltip={style}><img src={style.thumbnail} alt="" loading="lazy" /><span class="style-tile-copy"><strong>{style.name}</strong><small>{style.family}</small></span><span class="style-tile-add">{musicMix.includes(style.id) ? "✓" : "+"}</span></button>{/each}</div>
+   <div class="preset-discovery" use:scrollStrip role="region" tabindex="0" aria-label="Hip-hop style profiles">{#each visibleMusicStyles as style}<div class="style-tile-wrap"><button type="button" class="style-tile" class:chosen={musicMix.includes(style.id)} aria-pressed={musicMix.includes(style.id)} onclick={() => addMusicStyle(style.id)}><img src={style.thumbnail} alt="" loading="lazy" /><span class="style-tile-copy"><strong>{style.name}</strong><small>{style.family}</small></span><span class="style-tile-add">{musicMix.includes(style.id) ? "✓" : "+"}</span></button><button type="button" class="style-info" aria-label={`About ${style.name}`} use:styleTooltip={style}>i</button></div>{/each}</div>
    <small class="help-text">Drag or scroll to explore all styles.</small>
    {#if visibleMusicStyles.length === 0}<p class="help-text">No matching styles. Try another search.</p>{/if}
    </div>
@@ -690,7 +697,13 @@
 				bind:value={app.request.lyrics}
 			></textarea>
 		</label>
-		<details class="writer-disclosure"><summary><Sparkles size={15}/> Lyric assistant <span>Write with your local model</span></summary>
+		<div class="assistant-setting">
+            <label><input type="checkbox" role="switch" aria-label="Lyric assistant" checked={lyricAssistantEnabled} disabled={lyricBusy} onchange={(event) => setLyricAssistant(event.currentTarget.checked)} /> Lyric assistant: {lyricAssistantEnabled ? 'On' : 'Off'}</label>
+            <small>{lyricBusy ? 'Let the current lyric request finish, or cancel it below, before switching off.' : lyricAssistantEnabled ? 'Write a draft with Ollama when you choose Generate Lyrics.' : 'Use your own lyrics. The lyric assistant will not contact Ollama.'}</small>
+            <small>This setting does not stop Ollama tasks running in other apps.</small>
+        </div>
+        {#if lyricAssistantEnabled}
+        <details class="writer-disclosure"><summary><Sparkles size={15}/> Lyric assistant <span>Write with your local model</span></summary>
 		<div id="lyric-workbench" class="lyric-ai">
 			<label>Ollama model<select bind:value={lyricModel} disabled={lyricBusy}>
 				<option value="">Select an installed model</option>
@@ -723,6 +736,7 @@
 			<button type="button" class="generate-lyrics" disabled={!lyricTopic.trim() || lyricBusy || busy || !lyricModel} onclick={generateLyrics}>{lyricBusy ? 'Writing lyrics…' : 'Generate Lyrics with Ollama'}</button>
 		</div>
 		</details>
+		{/if}
 	</div></details>
 
 
@@ -1332,6 +1346,7 @@
 .style-row { display:flex; gap:.45rem; align-items:center; }
 .lyric-ai { margin-top:.65rem; padding:.65rem; border:1px solid rgba(45,212,191,.35); border-radius:.6rem; background:rgba(45,212,191,.05); }
 .lyric-ai textarea { width:100%; margin-top:.45rem; }
+.assistant-setting { display:flex; flex-direction:column; gap:.4rem; margin:1rem 0; } .assistant-setting label { display:flex; align-items:center; gap:.6rem; font-weight:600; } .assistant-setting input { width:auto; } .assistant-setting small { color:var(--fg-muted); }
 .generate-lyrics { width:100%; margin-top:.45rem; padding:.5rem; border:1px solid var(--border-strong); border-radius:.45rem; color:var(--fg); background:var(--bg-btn); font-size:.75rem; }
 .generate-lyrics:hover:not(:disabled) { background:var(--bg-btn-hover); }
 .generate-lyrics:disabled { opacity:.45; cursor:not-allowed; }

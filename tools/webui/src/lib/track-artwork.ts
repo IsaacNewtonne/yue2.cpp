@@ -2,12 +2,10 @@ import { checkArtwork, submitArtwork, artworkResult, uploadReference } from './c
 import { updateSong } from './db.js';
 import { JOB_POLL_MS } from './config.js';
 import type { Song } from './types.js';
+import { coverPrompt } from './cover-prompt.js';
 
 export function trackArtworkPrompt(song: Pick<Song, 'name' | 'style' | 'request'>): string {
- return `Create finished album cover artwork inspired by this song. Interpret the title and lyrics as a specific scene with expressive lighting, rich texture, depth and a strong focal subject. Professional cinematic illustration. No lettering, typography, logos, watermarks or plain title cards. Center the main subject for widescreen cropping.
-Song title: ${song.name.slice(0,200)}
-Musical mood: ${song.style.slice(0,1200)}
-Lyrical imagery: ${(song.request.lyrics ?? '').slice(0,2200)}`;
+ return coverPrompt(song.name, song.style, song.request.lyrics ?? '');
 }
 export async function generateTrackArtwork(song: Pick<Song,'name'|'style'|'request'|'created'> & Partial<Song>, existingId?: string, submitted?: (id:string)=>void|Promise<void>, signal?: AbortSignal, options?: {prompt?:string;seed?:number;reference?:Blob}): Promise<Blob> {
  signal?.throwIfAborted();

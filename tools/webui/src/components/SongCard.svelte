@@ -24,6 +24,7 @@
 	import Waveform from './Waveform.svelte';
 	import Menu, { type MenuItem } from './Menu.svelte';
 	import Dialog from './Dialog.svelte';
+	import SendToAlbum from './SendToAlbum.svelte';
 	import YouTubeDialog from './YouTubeDialog.svelte';
 	import ArtworkCover from './ArtworkCover.svelte';
 	import VideoArtwork from './VideoArtwork.svelte';
@@ -38,6 +39,7 @@
 
 	let playing = $state(false);
 	let youtubeOpen = $state(false);
+	let sendAlbumOpen = $state(false);
 	let activeVersion = $state<'mastered' | 'original' | 'vocal-adjusted'>('mastered');
 	let activeAudio = $derived(activeVersion === 'original' ? (song.vocalOriginalAudio ?? song.originalAudio ?? song.audio) : song.audio);
 	let time = $state(0);
@@ -323,6 +325,7 @@
 	const actionItems: MenuItem[] = $derived([
 		{ icon: Pencil, label: 'Edit prompt', onSelect: load },
 		{ icon: Type, label: 'Rename song', onSelect: openRename },
+		{ icon: Music, label: 'Send to album', disabled:song.id==null, onSelect:()=>{sendAlbumOpen=true;} },
 		{ icon: Download, label: 'Download audio', onSelect: downloadAudio },
 		...(song.video ? [{ icon: Download, label: 'Download video', onSelect: downloadVideo }] : []),
 		{ icon: Clapperboard, label: videoBusy ? 'Exporting video…' : 'Export video (MP4)', disabled: videoBusy || artBusy || artworkBusy, onSelect: () => owned(exportVideo) },
@@ -419,6 +422,7 @@
 	</div>
 </div>
 
+{#if sendAlbumOpen}<SendToAlbum {song} onclose={()=>{sendAlbumOpen=false;}} />{/if}
 <YouTubeDialog bind:open={youtubeOpen} {song} />
 <Dialog bind:open={confirmDeleteOpen} title="Delete this track?" onConfirm={doRemove} />
 
@@ -436,7 +440,7 @@
 
 	<Dialog bind:open={artDialogOpen} title="Generate artwork">
 		{#snippet body()}
-			<p>Rendered by ComfyUI (Qwen Image 2.1) at 1024×1024 and saved as this track's cover. Reads the card's style blend into the prompt; edit it freely.</p>
+			<p>Create a 1280×720 cinematic cover with a detailed scene and bold song-title lettering. The song's themes and musical mood guide the artwork. Edit the scene or lettering direction below.</p>
 			<label class="art-prompt">Prompt<textarea rows="4" bind:value={artPrompt} disabled={artBusy}></textarea></label>
 			<div class="art-row">
 				<label>Seed<input type="number" bind:value={artSeed} disabled={artBusy} /></label>

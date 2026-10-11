@@ -1,11 +1,19 @@
 <script lang="ts">
 	import { app } from '../lib/state.svelte.js';
 	import { activity, logTone } from '../lib/activity.svelte.js';
+	import { GenerationEta } from '../lib/generation-eta.ts';
 	import { SSE_RECONNECT_MS, LOG_MAX_LINES } from '../lib/config.js';
 	import { ChevronDown, ChevronRight, Terminal } from '@lucide/svelte';
 
 	let lines = $state<string[]>([]);
 	let connected = $state(false);
+    let overall = $state(false);
+    const etaKey = 'yue2-generation-eta-v1';
+    function readEta() { try { return JSON.parse(localStorage.getItem(etaKey) || '{}'); } catch { return {}; } }
+    const savedEta = readEta();
+    const estimator = new GenerationEta(savedEta.timings, savedEta.snapshot);
+    function persistEta() { try { localStorage.setItem(etaKey, JSON.stringify({timings:estimator.timings,snapshot:estimator.snapshot})); } catch { /* optional estimate cache */ } }
+    function clock(seconds:number) { const n=Math.ceil(seconds);return `${Math.floor(n/60)}:${String(n%60).padStart(2,'0')}`; }
 
 	$effect(() => {
 		let es: EventSource | null = null;
@@ -32,8 +40,19 @@
 		connect();
         let stopped=false, hadServerJob=false;
         const poll=async()=>{try {const response=await fetch('jobs',{signal:AbortSignal.timeout(5000)});if(!response.ok)return;const jobs=await response.json();if(stopped)return;
-            if(jobs.length){hadServerJob=true;const job=jobs[0];activity.running=true;activity.stage=job.stage;activity.detail=`Job ${job.id.slice(0,8)} · ${jobs.length-1} waiting · ${job.elapsed}s in stage`;activity.percent=job.total?100*job.done/job.total:null;activity.eta=job.done>0?job.elapsed/job.done*(job.total-job.done):null;}
-            else if(!activity.running || (hadServerJob && !['Creating artwork','Rendering MP4'].includes(activity.stage))){hadServerJob=false;activity.running=false;activity.stage='Ready';activity.detail='No server jobs queued';activity.percent=null;activity.eta=null;}
+            if(jobs.length){
+                hadServerJob=true;const job=jobs[0];activity.running=true;
+                const estimate=estimator.update(job);overall=estimate!==null;
+                activity.stage=job.stage;
+                activity.percent=estimate?.percent ?? null;
+                activity.eta=estimate?.eta ?? null;
+                const stagePercent=job.total>0?Math.min(100,100*job.done/job.total):null;
+                activity.detail=`Job ${job.id.slice(0,8)} | ${jobs.length-1} waiting | ${estimate ? clock(estimate.elapsed)+' elapsed (approx.)' : job.elapsed+'s in stage'}`;
+                if(stagePercent!==null)activity.detail+=` | Stage ${Math.floor(stagePercent)}% (${job.done}/${job.total} ${job.stage.startsWith('Composing')?'token budget':'steps'})`;
+                persistEta();
+            }
+            else if(!activity.running || (hadServerJob && !['Creating artwork','Rendering MP4'].includes(activity.stage))){hadServerJob=false;overall=false;estimator.clear();persistEta();activity.running=false;activity.stage='Ready';activity.detail='No server jobs queued';activity.percent=null;activity.eta=null;}
+
         }catch{/* logs show the connection state */}};
         void poll();const polling=setInterval(poll,1500);
         return () => {
@@ -56,9 +75,10 @@
 		<span class="live-dot" class:disconnected={!connected} title={connected ? 'Connected to server logs' : 'Connecting to server logs'}></span>
 	</button>
 	<div class="progress-panel" aria-label="Generation progress">
-		<div class="progress-heading"><strong>{connected ? activity.stage : 'Reconnecting…'}</strong><span>{activity.running && connected && activity.percent !== null ? `${Math.floor(activity.percent)}%` : activity.running ? 'Working' : 'Idle'}</span></div>
+		<div class="progress-heading"><strong>{connected ? activity.stage : 'Reconnecting…'}</strong><span>{activity.running && connected && activity.percent !== null ? `${Math.floor(activity.percent)}% overall` : activity.running ? 'Working' : 'Idle'}</span></div>
 		{#if activity.running && connected && activity.percent === null}<progress aria-label={activity.stage}></progress>{:else}<progress aria-label={activity.stage} max="100" value={activity.running && connected ? activity.percent ?? 0 : 0}></progress>{/if}
-		<div class="progress-detail"><span>{connected ? activity.detail || 'Start a track to see its progress' : 'Waiting for the server connection'}</span><strong>{activity.running && connected && activity.eta !== null ? `Stage ETA ≈ ${Math.floor(Math.ceil(activity.eta) / 60)}:${String(Math.ceil(activity.eta) % 60).padStart(2, '0')}` : activity.running ? 'ETA: unavailable' : 'ETA: —'}</strong></div>
+		<div class="progress-detail"><span>{connected ? activity.detail || 'Start a track to see its progress' : 'Waiting for the server connection'}</span><strong>{activity.running && connected && activity.eta !== null ? `Track ETA ? ${clock(activity.eta)}` : activity.running ? 'ETA: estimating…' : 'ETA: —'}</strong></div>
+        {#if overall && activity.running}<p class="eta-note">Estimated until audio is ready, including remaining composition, rendering, decoding and encoding. Based on recent timings; adjusts as work progresses. Artwork, video and additional takes are separate.</p>{/if}
 	</div>
 	{#if app.logsOpen}
 		<div class="log-legend"><span class="compose">Compose</span><span class="render">Render</span><span class="audio">Audio</span><span class="success">Complete</span><span class="error">Error</span></div>
@@ -68,6 +88,7 @@
 </div>
 
 <style>
+	.eta-note {margin:0;font-size:.62rem;line-height:1.45;color:var(--fg-dim);}
 	.progress-panel { padding:.8rem; display:grid; gap:.5rem; background:var(--bg-card-2); border-top:1px solid var(--border); }
 	.progress-heading,.progress-detail {display:flex;justify-content:space-between;gap:.6rem;align-items:center;}
 	.progress-heading {font-size:.78rem;color:var(--fg);}

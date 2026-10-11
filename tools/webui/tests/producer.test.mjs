@@ -1,9 +1,31 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanProducer, applyProducer, delivery, estimatedDuration, lyricGuidance, lyricWarnings } from '../src/lib/producer.ts';
+import { cleanProducer, applyProducer, delivery, estimatedDuration, lyricGuidance, lyricWarnings, castLyrics } from '../src/lib/producer.ts';
 import { prepareGeneration } from '../src/lib/generation-request.ts';
 
 const base = {style:'Soul', lyrics:'[Verse]\nWe carry light into the morning\n[Chorus]\nCarry me home', duration:0, abc_sampling:{}, semantic_sampling:{}};
+test('three voices receive solo sections in existing markdown lyrics without changing words', () => {
+ const lyrics='## [Intro]\nHello\n\n## [Verse 1]\nFirst words\n\n## [Hook]\nHook words\n\n[Instrumental break]\n\n[Verse 2]\nMore words';
+ const p=cleanProducer({voices:3});
+ const result=applyProducer({...base,lyrics},p);
+ assert.match(result.lyrics,/\[Intro - Voice 1\]/);
+ assert.match(result.lyrics,/\[Verse 1 - Voice 2\]/);
+ assert.match(result.lyrics,/\[Hook - Voice 3\]/);
+ assert.match(result.lyrics,/\[Instrumental break\]/);
+ assert.match(result.lyrics,/\[Verse 2 - Voice 1\]/);
+ assert.equal(result.lyrics.replace(/ - Voice \d+/g,''),lyrics);
+ assert.equal(castLyrics(result.lyrics,p),result.lyrics);
+ assert.equal(castLyrics(lyrics,cleanProducer({voices:1})),lyrics);
+ assert.equal(castLyrics(lyrics,{...p,enabled:false}),lyrics);
+});
+test('manual casting is preserved and unlabelled lines receive voice assignments',()=>{
+ const p=cleanProducer({voices:3});
+ assert.match(castLyrics('[Verse - Voice 2]\nWords\n[Hook]\nMore',p),/\[Hook - Voice 3\]/);
+ const lyrics='One\nTwo\nThree\nFour\nFive\nSix';
+ const result=castLyrics(lyrics,p);
+ for(const n of [1,2,3])assert.match(result,new RegExp(`Voice ${n}`));
+ assert.deepEqual(result.split('\n').filter(s=>s && !s.startsWith('[')),lyrics.split('\n'));
+});
 test('instrumental renders omit words without destroying the source lyrics', () => {
  const result = applyProducer(base, cleanProducer({presence:0}));
  assert.equal(result.lyrics, '');

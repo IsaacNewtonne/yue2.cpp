@@ -46,6 +46,6 @@ export function validSong(value: unknown): Song {
   const draft = value.youtubeDraft;
   if (!object(draft) || draft.version !== 1 || ['title','description','tags','playlist','endScreen'].some(key => typeof draft[key] !== 'string') || !['review','kids','general'].includes(String(draft.audience)) || !['private','unlisted','public'].includes(String(draft.visibility))) throw new Error('Backup YouTube draft is invalid.');
  }
- for (const key of ['sourceJob','takeGroup','score','albumId','albumTitle','albumTrackId']) if (value[key] !== undefined && typeof value[key] !== 'string') throw new Error(`Backup track has invalid ${key}.`);
+ for (const key of ['sourceJob','takeGroup','score','albumId','albumTitle','albumTrackId','libraryKey']) if (value[key] !== undefined && typeof value[key] !== 'string') throw new Error(`Backup track has invalid ${key}.`);
  return {...value, score: value.score ?? '', request:validRequest(value.request)} as unknown as Song;
 }

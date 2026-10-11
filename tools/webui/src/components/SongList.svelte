@@ -1,5 +1,5 @@
 <script lang="ts">
-	let { showLog = true }: { showLog?: boolean } = $props();
+	let { showLog = true, songIds }: { showLog?: boolean; songIds?:number[] } = $props();
 	import { Search, Star, ArrowUpRight, Download, Upload } from '@lucide/svelte';
 	import { app, toast } from '../lib/state.svelte.js';
 	import { exportLibrary, importLibrary, BACKUP_SETTINGS } from '../lib/backup.js';
@@ -12,14 +12,15 @@
 	let page = $state(0);
 	const pageSize = 12;
 	let query = $state('');
-	$effect(() => { query; favouritesOnly; takeGroup; page = 0; });
+	$effect(() => { query; favouritesOnly; takeGroup; songIds; page = 0; });
 	let favouritesOnly = $state(false);
 	let takeGroup = $state('');
 	const takeGroups = $derived([...new Map(app.songs.filter(song => song.takeGroup).map(song => [song.takeGroup!, song.name.replace(/ · Take \d+.*$/, '')])).entries()]);
 	let backupBusy = $state(false);
 	let backupAction = $state<'backup' | 'restore'>('backup');
 	let backupInput: HTMLInputElement;
-	let filtered = $derived(app.songs.filter(song => (!takeGroup || song.takeGroup === takeGroup) && (!favouritesOnly || song.favorite) && `${song.name} ${song.style}`.toLowerCase().includes(query.trim().toLowerCase())));
+	let listed=$derived(songIds?songIds.flatMap(id=>app.songs.filter(s=>s.id===id)):app.songs);
+	let filtered = $derived(listed.filter(song => (!songIds||songIds.includes(song.id!)) && (!takeGroup || song.takeGroup === takeGroup) && (!favouritesOnly || song.favorite) && `${song.name} ${song.style}`.toLowerCase().includes(query.trim().toLowerCase())));
 	function downloadBackup(blob: Blob, prefix = 'yue2-library') { const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${prefix}-${new Date().toISOString().replace(/[:.]/g,'-')}.zip`; link.click(); setTimeout(() => URL.revokeObjectURL(url),60000); }
 	async function exportBackup() {
 		if (backupBusy) return;

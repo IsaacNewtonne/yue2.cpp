@@ -120,7 +120,9 @@ static bool audio_vocal_balance_ffmpeg(const float * audio,
                                        bool auto_gain,
                                        std::vector<float> * balanced,
                                        float * applied_gain_db,
-                                       std::string * error) {
+                                       std::string * error,
+                                       std::string * vocal_stem = nullptr,
+                                       std::string * instrumental_stem = nullptr) {
     if (!audio || samples <= 0 || !balanced || (!auto_gain && (!std::isfinite(requested_gain_db) || requested_gain_db < -12.0f ||
         requested_gain_db > 12.0f))) {
         if (error) *error = "vocal gain must be between -12 and +12 dB";
@@ -186,6 +188,18 @@ static bool audio_vocal_balance_ffmpeg(const float * audio,
     if (!fs::exists(vocals) || !fs::exists(backing)) {
         if (error) *error = "separator did not create the expected vocals and instrumental stems";
         return false;
+    }
+    if (vocal_stem && instrumental_stem) {
+        auto read_stem = [](const fs::path & path, std::string * data) {
+            std::ifstream file(path, std::ios::binary);
+            data->assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+            return !file.bad() && data->size() > 44;
+        };
+        if (!read_stem(vocals, vocal_stem) || !read_stem(backing, instrumental_stem)) {
+            if (error) *error = "could not read separated stems";
+            return false;
+        }
+        return true;
     }
     float vocal_gain_db = requested_gain_db;
     if (auto_gain) {

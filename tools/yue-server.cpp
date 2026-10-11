@@ -664,7 +664,7 @@ static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
     g_pipeline.progress=[job](const char *stage,int done,int total) { std::lock_guard<std::mutex> lock(job->progress_mutex); if(job->stage!=stage)job->stage_start=std::chrono::steady_clock::now();job->stage=stage;job->stage_done=done;job->stage_total=total; };
     bool ok = pipeline_generate(&g_pipeline, request, &songs, server_cancel_job, (void *) &job->cancel);
     g_pipeline.progress={};
-    { std::lock_guard<std::mutex> lock(job->progress_mutex);job->stage="Encoding and mastering";job->stage_done=job->stage_total=0; }
+    { std::lock_guard<std::mutex> lock(job->progress_mutex);job->stage="Encoding and mastering";job->stage_done=job->stage_total=0;job->stage_start=std::chrono::steady_clock::now(); }
 
     if (!ok) {
         active_job_set(nullptr);
@@ -984,13 +984,23 @@ int main(int argc, char ** argv) {
         }
         std::vector<float> balanced;
         std::string error;
+        std::string vocal_stem, instrumental_stem;
+        const bool stems_only = req.form.has_field("stems_only") && req.form.get_field("stems_only") == "1";
         float applied_gain = 0.0f;
         const bool ok = audio_vocal_balance_ffmpeg(audio, samples, sample_rate, gain, auto_gain,
-                                                   &balanced, &applied_gain, &error);
+                                                   &balanced, &applied_gain, &error,
+                                                   stems_only ? &vocal_stem : nullptr, stems_only ? &instrumental_stem : nullptr);
         free(audio);
         if (!ok) {
             res.status = 503;
             res.set_content(json_string("error", error), "application/json");
+            return;
+        }
+        if (stems_only) {
+            const std::string boundary = "yue2-separated-stems";
+            res.set_content("--" + boundary + "\r\nContent-Type: audio/wav\r\nContent-Disposition: attachment; name=\"vocals\"\r\n\r\n" + vocal_stem +
+                "\r\n--" + boundary + "\r\nContent-Type: audio/wav\r\nContent-Disposition: attachment; name=\"instrumental\"\r\n\r\n" + instrumental_stem +
+                "\r\n--" + boundary + "--\r\n", "multipart/mixed; boundary=" + boundary);
             return;
         }
         const std::string wav = audio_encode_wav_f32(balanced.data(), samples, sample_rate);

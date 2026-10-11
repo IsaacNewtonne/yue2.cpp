@@ -283,7 +283,8 @@ static bool pipeline_generate(Yue2Pipeline *          p,
         std::vector<int>            open = yue2_build_prompt_ids(encode, cot, r.style, r.lyrics, nullptr);
         std::vector<Yue2Generation> plans;
         if (!yue2_generate(lm, &p->kv, std::vector<std::vector<int>>(B, open), {}, 1.0f, r.abc_sampling, r.lm_seed,
-                           YUE2_PHASE_ABC, &plans, cancelled, cancel_data)) {
+                           YUE2_PHASE_ABC, &plans, cancelled, cancel_data,
+                           [p](int done,int total){if(p->progress)p->progress("Composing score",done,total);})) {
             return false;
         }
         for (int i = 0; i < B; i++) {
@@ -344,7 +345,7 @@ static bool pipeline_generate(Yue2Pipeline *          p,
             }
         }
         if (!yue2_generate(lm, &p->kv, prefixes, negatives, guidance, semantic, r.lm_seed, YUE2_PHASE_SEMANTIC, &codes,
-                           cancelled, cancel_data)) {
+                           cancelled, cancel_data, [p](int done,int total){if(p->progress)p->progress("Composing performance",done,total);})) {
             return false;
         }
     }
@@ -421,7 +422,7 @@ static bool pipeline_generate(Yue2Pipeline *          p,
                 (float) T_lat / (float) YUE2_FRAME_RATE, prefix_len, chunks, chunks > 1 ? "s" : "", chunk_size, M,
                 M > 1 ? "s" : "");
         for (int start = 0; start < T_lat; start += chunk_size) {
-            if(p->progress) p->progress("Rendering audio chunks",start/chunk_size,chunks);
+            if(p->progress) p->progress("Rendering audio chunks",(start/chunk_size)*r.steps,chunks*r.steps);
             Timer chunk_timer;
             int   frames = T_lat - start < chunk_size ? T_lat - start : chunk_size;
             int   ar_len = prefix_len + frames + 1;
@@ -470,7 +471,8 @@ static bool pipeline_generate(Yue2Pipeline *          p,
                        (*songs)[(size_t) i * M + j].latents.data() + (size_t) start * YUE2_LATENT_DIM,
                        span * sizeof(float));
             }
-            if (!nar_solve(nar, &p->kv, block.data(), frames, M, ar_len, i, r.steps, dbg, cancelled, cancel_data)) {
+            if (!nar_solve(nar, &p->kv, block.data(), frames, M, ar_len, i, r.steps, dbg, cancelled, cancel_data,
+                           [p,start,chunk_size,chunks](int done,int total){if(p->progress)p->progress("Rendering audio chunks",(start/chunk_size)*total+done,chunks*total);})) {
                 return false;
             }
             for (int j = 0; j < M; j++) {

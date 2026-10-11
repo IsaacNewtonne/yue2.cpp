@@ -16,6 +16,7 @@ export async function runAlbum(album: Album, pause:()=>boolean, changed:()=>void
   await save('Preparing album');
   for(const [index,track] of album.tracks.entries()) {
    if(pause())break;
+   if(track.linked)continue;
    let song=track.songId==null?undefined:await getSong(track.songId);
    if(track.songId!=null&&!song)throw new Error(`${track.title} was deleted from the library. Restore it or remove it from this album plan.`);
    if(!song) {

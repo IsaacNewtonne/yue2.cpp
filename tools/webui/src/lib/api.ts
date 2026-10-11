@@ -156,7 +156,7 @@ export async function jobResultTracks(id: string): Promise<JobTrack[]> {
 
 // Split a multipart/mixed body on its boundary and return one Blob per
 // part, typed by the part's own Content-Type header.
-function parseMultipartParts(buf: Uint8Array, boundary: string): Blob[] {
+export function parseMultipartParts(buf: Uint8Array, boundary: string): Blob[] {
 	const enc = new TextEncoder();
 	const delim = enc.encode('--' + boundary);
 	const dec = new TextDecoder();

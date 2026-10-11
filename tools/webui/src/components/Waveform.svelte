@@ -104,7 +104,9 @@
 		decoded = null;
 		peaks = isMasteredAudio && song.peaks ? song.peaks : new Float32Array();
 		if (isMasteredAudio && song.peaks) dur = song.duration;
-		draw();
+		// Drawing reads the moving playhead. Do not make decoding depend on it:
+		// cached (mastered) waveforms would otherwise restart on every frame.
+		untrack(draw);
 		if (!playing && (!visible || (peaks.length && retry===0))) return;
 		loading = true; decodeError = '';
 		decodeAudio(selectedAudio)
@@ -151,13 +153,15 @@
 	$effect(() => {
 		const wantPlay = playing;
 		if (!decoded || !actx) return;
+        const context = actx;
+		untrack(() => {
 		if (wantPlay) {
-			if (actx.state === 'suspended') actx.resume();
+			if (context.state === 'suspended') void context.resume();
 			const syncPos = findSyncPosition(dur, playingId);
 			if (syncPos >= 0) {
 				// schedule start 10ms in the future, compensate offset so both
 				// tracks play the same sample at the same audio frame
-				const now = actx.currentTime;
+				const now = context.currentTime;
 				const delta = 0.01;
 				startPlayback(syncPos + delta, now + delta);
 			} else {
@@ -168,6 +172,7 @@
 			stopPlayback();
 			cancelLoop();
 		}
+        });
 	});
 
 	function computePeaks(buf: AudioBuffer, numBins: number): Float32Array {

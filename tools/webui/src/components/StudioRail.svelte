@@ -4,6 +4,7 @@
 	import { canRemix } from '../lib/remix.js';
 	import { updateSong } from '../lib/db.js';
 	import Waveform from './Waveform.svelte';
+	import ReactiveSpeaker from './ReactiveSpeaker.svelte';
 	import LogCard from './LogCard.svelte';
 	import ArtworkCover from './ArtworkCover.svelte';
 	import type { Song } from '../lib/types.js';
@@ -68,7 +69,7 @@
 
 		<section class="rail-card output-card">
 			<div class="rail-card-heading"><h2><Sparkles size={16} /> Output</h2></div>
-			<div class="monitor-controls"><label class="monitor-volume"><span class="volume-dial" style={`--level:${app.volume * 270}deg`}><strong>{Math.round(app.volume * 100)}<small>%</small></strong></span><span>Monitor volume</span><input aria-label="Monitor volume" type="range" min="0" max="1" step="0.01" bind:value={app.volume}/></label><div class="delivery-controls"><label>Format<select aria-label="Output format" bind:value={app.format}><option value="mp3">MP3</option><option value="wav16">WAV · 16 bit</option><option value="wav24">WAV · 24 bit</option><option value="wav32">WAV · 32 bit</option><option value="mp4">MP4 · 16:9</option></select></label><label>Mastering<select aria-label="Output mastering" bind:value={app.request.mastering_profile}><option value="off">Off</option><option value="streaming">Streaming</option><option value="broadcast">Broadcast</option></select></label></div></div>
+			<div class="monitor-controls"><label class="monitor-volume"><ReactiveSpeaker /><span>Monitor volume ? {Math.round(app.volume * 100)}%</span><input aria-label="Monitor volume" type="range" min="0" max="1" step="0.01" bind:value={app.volume}/></label><div class="delivery-controls"><label>Format<select aria-label="Output format" bind:value={app.format}><option value="mp3">MP3</option><option value="wav16">WAV · 16 bit</option><option value="wav24">WAV · 24 bit</option><option value="wav32">WAV · 32 bit</option><option value="mp4">MP4 · 16:9</option></select></label><label>Mastering<select aria-label="Output mastering" bind:value={app.request.mastering_profile}><option value="off">Off</option><option value="streaming">Streaming</option><option value="broadcast">Broadcast</option></select></label></div></div>
 			<div class="output-summary"><div><span>DELIVERY</span><strong>{app.format.toUpperCase()}</strong></div><div><span>MASTERING</span><strong>{masteringLabel}</strong></div></div>
 		</section>
 
@@ -105,9 +106,6 @@
 	.monitor-controls {display:grid;grid-template-columns:110px minmax(0,1fr);gap:18px;align-items:center;margin-bottom:12px}
 	.monitor-volume {display:flex;flex-direction:column;align-items:center;gap:7px;color:var(--fg-dim);font-size:9px}
 	.monitor-volume input {width:85px;accent-color:var(--accent)}
-	.volume-dial {display:grid;place-items:center;width:76px;height:76px;border:1px solid var(--border);border-radius:50%;background:conic-gradient(from 225deg,var(--accent) 0deg var(--level),var(--bg-btn) var(--level) 270deg,transparent 270deg);box-shadow:inset 0 0 0 5px var(--bg-input)}
-	.volume-dial strong {display:grid;place-content:center;width:56px;height:56px;border-radius:50%;background:radial-gradient(circle at 35% 25%,var(--bg-btn-hover),var(--bg));box-shadow:0 3px 9px #0006;font:17px ui-monospace,monospace;color:var(--fg);text-align:center}
-	.volume-dial small {font-size:8px;color:var(--fg-dim)}
 	.delivery-controls {display:flex;flex-direction:column;gap:9px}
 	.delivery-controls label {display:flex;flex-direction:column;gap:4px;font-size:10px;color:var(--fg-dim)}
 	.delivery-controls select {width:100%;font-size:11px!important;padding:6px 8px!important}

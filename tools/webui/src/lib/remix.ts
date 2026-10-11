@@ -7,7 +7,7 @@ export interface RemixDraft {
 }
 
 export function canRemix(song: Song): boolean {
-	return !!song.request.semantic_tokens?.trim() &&
+	return !song.ensemble && !!song.request.semantic_tokens?.trim() &&
 		[song.request.lm_seed, song.request.seed].every(seed => typeof seed === 'number' && Number.isFinite(seed) && seed >= 0);
 }
 

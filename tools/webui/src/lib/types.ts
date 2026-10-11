@@ -46,6 +46,8 @@ export interface Yue2Props {
 
 // what we store in IndexedDB per song
 export interface Song {
+	ensemble?: {profiles:string[];order:number[];sectionSeconds:number};
+	libraryKey?: string;
 	mediaRevision?: number;
 	videoRevision?: number;
 	videoVersion?: string;

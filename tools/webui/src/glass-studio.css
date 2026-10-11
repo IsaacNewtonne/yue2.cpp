@@ -170,3 +170,14 @@ html[data-theme='studio'] ::-webkit-scrollbar-thumb {background:#aebbd5;border-c
   html[data-theme='studio'] .yue2-app .request-form .preset-discovery {grid-template-columns:repeat(3,minmax(0,1fr))}
 }
 @media(prefers-reduced-motion:reduce) {html[data-theme='studio'] *,html[data-theme='studio'] *::before,html[data-theme='studio'] *::after {animation:none!important;scroll-behavior:auto!important;transition:none!important}}
+
+/* Separate sibling controls keep information clicks from selecting a style. */
+.yue2-app .request-form .preset-discovery .style-tile-wrap {position:relative;display:flex;min-width:0;flex:0 0 78px}
+.yue2-app .request-form .preset-discovery .style-tile-wrap button.style-tile {width:100%;flex:1 1 auto}
+.yue2-app .request-form .preset-discovery button.style-info {position:absolute;top:7px;left:7px;z-index:2;display:grid;place-items:center;width:24px;height:24px;min-height:0;padding:0;border:1px solid #ffffffa0;border-radius:50%;background:#10243deb;color:#fff;font:bold 15px Georgia,serif;box-shadow:0 2px 8px #0005;cursor:pointer}
+.yue2-app .request-form .preset-discovery button.style-info:hover,.yue2-app .request-form .preset-discovery button.style-info[aria-expanded='true'] {background:var(--accent);color:var(--bg);border-color:var(--accent)}
+.yue2-app .request-form .preset-discovery button.style-info:focus-visible {outline:3px solid var(--focus);outline-offset:3px}
+.style-explanation[popover] {margin:0;inset:auto;padding-top:26px}
+.style-explanation-close {position:absolute;right:8px;top:6px;display:grid;place-items:center;width:30px;height:30px;border:1px solid var(--border-strong);border-radius:50%;background:var(--bg-btn);color:var(--fg);font-size:22px;cursor:pointer}
+.style-explanation-close:focus-visible {outline:3px solid var(--focus);outline-offset:2px}
+@media(min-width:1500px) {.yue2-app .request-form .preset-discovery .style-tile-wrap {flex-basis:86px}}
