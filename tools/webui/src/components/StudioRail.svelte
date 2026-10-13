@@ -3,6 +3,7 @@
 	import { app, startRemix, toast } from '../lib/state.svelte.js';
 	import { canRemix } from '../lib/remix.js';
 	import { updateSong } from '../lib/db.js';
+	import { player, isCurrent, toggleTrack } from '../lib/player.svelte.js';
 	import Waveform from './Waveform.svelte';
 	import ReactiveSpeaker from './ReactiveSpeaker.svelte';
 	import LogCard from './LogCard.svelte';
@@ -13,8 +14,6 @@
 		showGenerated?: boolean;
 	} = $props();
 	let selectedId = $state<number | undefined>(undefined);
-	let playing = $state(false);
-	let time = $state(0);
 	let duration = $state(0);
 	let previewElement = $state<HTMLElement>();
 	async function fullscreen() {
@@ -36,11 +35,11 @@
 		link.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
 	}
 	let selectedSong = $derived(app.songs.find(song => song.id === selectedId) ?? app.songs[0]);
+	let playing = $derived(!!selectedSong && isCurrent(selectedSong) && player.playing);
+	let time = $derived(selectedSong && isCurrent(selectedSong) ? player.time : 0);
 	let recentSongs = $derived(app.songs.slice(0, 3));
 	function selectSong(song: Song) {
 		if (selectedId === song.id) return;
-		playing = false;
-		time = 0;
 		selectedId = song.id;
 	}
 	function formatTime(value: number) {
@@ -58,8 +57,8 @@
 				{#if selectedSong.artwork}<div class="rail-artwork"><ArtworkCover artwork={selectedSong.artwork} title={selectedSong.name} /></div>{/if}
 				<div class="preview-track-title"><strong>{selectedSong.name}</strong><span>{selectedSong.style || 'Custom sound'} · {formatTime(duration || selectedSong.duration)}</span></div>
 				<div class="preview-player">
-					<button class="preview-play" type="button" aria-pressed={playing} aria-label={playing ? 'Pause preview' : 'Play preview'} onclick={() => playing = !playing}>{#if playing}<Pause size={18} fill="currentColor" />{:else}<Play size={18} fill="currentColor" />{/if}</button>
-					<div class="preview-wave"><Waveform song={selectedSong} bind:playing bind:time bind:dur={duration} /></div>
+					<button class="preview-play" type="button" aria-pressed={playing} aria-label={playing ? 'Pause preview' : 'Play preview'} onclick={() => toggleTrack(selectedSong)}>{#if playing}<Pause size={18} fill="currentColor" />{:else}<Play size={18} fill="currentColor" />{/if}</button>
+					<div class="preview-wave"><Waveform song={selectedSong} {playing} {time} bind:dur={duration} /></div>
 				</div>
 				<div class="preview-time"><span>{formatTime(time)}</span><span>{formatTime(duration)}</span></div>
 			{:else}
@@ -79,7 +78,7 @@
 				<div class="recent-list">
 					{#each recentSongs as song (song.id)}
 						<div class="recent-track" class:selected={selectedSong?.id === song.id}>
-						<button class="recent-select" type="button" aria-label={`${selectedSong?.id === song.id && playing ? 'Pause' : 'Play'} ${song.name}`} onclick={() => { if (selectedSong?.id === song.id) playing = !playing; else { selectSong(song); playing = true; } }}>
+						<button class="recent-select" type="button" aria-label={`${selectedSong?.id === song.id && playing ? 'Pause' : 'Play'} ${song.name}`} onclick={() => { selectSong(song); toggleTrack(song); }}>
 							<span class="recent-play">{#if selectedSong?.id === song.id && playing}<Pause size={15} fill="currentColor" />{:else}<Play size={15} fill="currentColor" />{/if}</span>
 							<span class="recent-info"><strong>{song.name}</strong><small>{song.style || 'Custom sound'} · {formatTime(song.duration)}</small></span>
 							<span class="mini-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>

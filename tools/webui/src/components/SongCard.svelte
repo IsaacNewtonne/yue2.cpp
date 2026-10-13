@@ -1,7 +1,7 @@
 <script lang="ts">
 	import {
 		Play,
-		Square,
+		Pause,
 		Pencil,
 		Download,
 		Trash2,
@@ -21,6 +21,7 @@
 	import { transcribeSubmit, pollJob, jobResultTranscribe, balanceVocalLevel, renderVideo } from '../lib/api.js';
 	import { deleteSong, deleteSongs, updateSong } from '../lib/db.js';
 	import type { Song } from '../lib/types.js';
+	import { player, isCurrent, toggleTrack, pause, clearTrack } from '../lib/player.svelte.js';
 	import Waveform from './Waveform.svelte';
 	import Menu, { type MenuItem } from './Menu.svelte';
 	import Dialog from './Dialog.svelte';
@@ -37,12 +38,12 @@
 
 	let { song }: { song: Song } = $props();
 
-	let playing = $state(false);
 	let youtubeOpen = $state(false);
 	let sendAlbumOpen = $state(false);
 	let activeVersion = $state<'mastered' | 'original' | 'vocal-adjusted'>('mastered');
 	let activeAudio = $derived(activeVersion === 'original' ? (song.vocalOriginalAudio ?? song.originalAudio ?? song.audio) : song.audio);
-	let time = $state(0);
+	let playing = $derived(isCurrent(song, activeAudio) && player.playing);
+	let time = $derived(isCurrent(song, activeAudio) ? player.time : 0);
 	let dur = $state(0);
 	let artworkInput: HTMLInputElement;
 	let artworkBusy = $state(false);
@@ -111,13 +112,12 @@
 	);
 
 	function toggle() {
-		playing = !playing;
+		toggleTrack(song, activeAudio);
 	}
 
 	function chooseVersion(version: 'mastered' | 'original' | 'vocal-adjusted') {
 		if (version === activeVersion) return;
-		playing = false;
-		time = 0;
+		if (isCurrent(song)) pause();
 		activeVersion = version;
 	}
 
@@ -181,7 +181,7 @@
 			if(result.jobId)void fetch(`job?id=${result.jobId}&ack=1`,{method:'POST'}).catch(()=>{});
 			vocalGain = result.gainDb;
 			activeVersion = 'vocal-adjusted';
-			playing = false;
+			if (isCurrent(song)) pause();
 			vocalDialogOpen = false;
 			toast(`${autoGain ? 'Auto suggested' : 'Vocal gain'} ${vocalGain >= 0 ? '+' : ''}${vocalGain} dB.`, 4000, true);
 		} catch (error) {
@@ -228,7 +228,7 @@
 
 	async function doRemove() {
 		if (song.id == null) return;
-		try { await deleteSong(song.id); const idx = app.songs.findIndex((s) => s.id === song.id); if (idx >= 0) app.songs.splice(idx, 1); }
+		try { await deleteSong(song.id); if (isCurrent(song)) clearTrack(); const idx = app.songs.findIndex((s) => s.id === song.id); if (idx >= 0) app.songs.splice(idx, 1); }
 		catch (error) { toast(error instanceof Error ? error.message : 'Could not delete track.'); }
 	}
 
@@ -237,7 +237,7 @@
 	// purge if it is not flagged favorite.
 	async function doRemoveNonFavorites() {
 		const victims = app.songs.filter((s) => !s.favorite);
-		try { await deleteSongs(victims.flatMap(s => s.id == null ? [] : [s.id])); app.songs = app.songs.filter(s => !victims.includes(s)); }
+		try { await deleteSongs(victims.flatMap(s => s.id == null ? [] : [s.id])); if (victims.some(s => isCurrent(s))) clearTrack(); app.songs = app.songs.filter(s => !victims.includes(s)); }
 		catch (error) { toast(error instanceof Error ? error.message : 'Could not delete tracks.'); }
 	}
 
@@ -351,9 +351,9 @@
 	<div class="track-media" class:with-artwork={!!(song.artwork || song.video)}>
 	{#if song.artwork}<ArtworkCover artwork={song.artwork} title={song.name} />{:else if song.video}<VideoArtwork video={song.video} title={song.name} />{/if}
 	<div class="thumb" style={thumbStyle}>
-		<button class="play-btn" onclick={toggle} aria-pressed={playing} title={playing ? 'Stop' : 'Play'} aria-label={`${playing ? 'Stop' : 'Play'} ${song.name}`}>
+		<button class="play-btn" onclick={toggle} aria-pressed={playing} title={playing ? 'Pause' : 'Play'} aria-label={`${playing ? 'Pause' : 'Play'} ${song.name}`}>
 			{#if playing}
-				<Square size={17} fill="currentColor" />
+				<Pause size={17} fill="currentColor" />
 			{:else}
 				<Play size={17} fill="currentColor" />
 			{/if}
@@ -397,7 +397,7 @@
 			<p role="status"><TriangleAlert size={14} /> {song.request.generation_warning}</p>
 		{/if}
 		<div class="wave-wrap">
-		<Waveform {song} audio={activeAudio} bind:playing bind:time bind:dur />
+		<Waveform {song} audio={activeAudio} {playing} {time} bind:dur />
 		</div>
 		{#if song.originalAudio || song.vocalOriginalAudio}
 			<div class="master-ab" role="group" aria-label="Compare original and mastered audio">

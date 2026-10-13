@@ -212,7 +212,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 90px; }
 .library-page-head h1 { margin-top:5px; font-size:24px; letter-spacing:-.04em; }
 .library-page-head p:last-child { margin-top:5px; color:#95aca6; font-size:11px; }
 .library-page-head button { display:flex; align-items:center; gap:8px; padding:9px 12px; border:1px solid #267467; border-radius:9px; color:#06251f; background:#22d4ad; font-size:11px; cursor:pointer; }
-.library-rail { width:min(370px,30vw); padding:10px 12px 12px 0; border-left:1px solid #173436; }
+.library-rail { width:auto; max-width:100%; padding:10px 12px 12px 0; border-left:1px solid #173436; }
 .library-rail .studio-rail { padding-left:10px; }
 .library-main .song-list { max-width:1000px; }
 .library-main .song-list .empty { border-color:#1c3d3e; background:#0a1c1e; }
@@ -247,3 +247,10 @@ html { scroll-behavior: smooth; scroll-padding-top: 90px; }
 @media(max-width:680px) { .yue2-app { height:auto; min-height:100dvh; overflow:visible; }.yue2-app header.topbar { position:sticky; top:0; padding:0 10px; gap:9px; }.yue2-app .brand-name { font-size:14px; }.yue2-app .brand-mark { width:34px;height:34px; }.yue2-app .brand-version { display:none; }.yue2-app .status-pill { max-width:145px; height:32px; padding:0 8px; font-size:9px; }.yue2-app .volume { display:none; }.studio-frame { display:flex; height:auto; min-height:calc(100dvh - 58px); flex-direction:column; }.left-sidebar { position:sticky; top:58px; z-index:10; display:block; padding:6px 8px; overflow:visible; border-right:0; border-bottom:1px solid #173436; }.side-nav { flex-direction:row; overflow:auto; gap:5px; }.side-nav button,.side-nav a { justify-content:center; width:auto; min-width:max-content; min-height:36px; padding:0 10px; gap:7px; font-size:10px; }.side-nav a,.side-nav button:nth-child(4),.side-nav button:nth-child(5),.side-nav button:nth-child(6) { display:none; }.quick-style-block,.add-style { display:none; }.workspace-main { display:flex; overflow:visible; padding:7px; }.center-scroll { overflow:visible; }.workspace-main > .studio-rail { display:flex; overflow:visible; }.library-main { overflow:visible; padding:12px; }.library-rail { display:none; }.yue2-app .request-form { display:flex; }.yue2-app .request-form .desk-nav { top:101px; overflow:auto; justify-content:flex-start; }.yue2-app .request-form .desk-nav a { flex:0 0 auto; }.yue2-app .request-form .desk-nav .step-copy small { display:none; }.library-page-head { align-items:flex-start; }.library-page-head h1 { font-size:20px; } }
 @media(max-width:680px) { .yue2-app .request-form .preset-discovery { grid-template-columns:repeat(2,minmax(0,1fr)); max-height:270px; }.yue2-app .request-form .preset-discovery button.style-tile { grid-template-columns:38px minmax(0,1fr) 12px; gap:6px; padding:5px; }.yue2-app .request-form .preset-discovery button.style-tile img { width:38px; height:38px; } }
 @media(max-width:680px) { .workspace-main > .studio-rail { width:100%; max-width:100%; align-self:stretch; }.workspace-main > .studio-rail > .rail-card { width:100%; max-width:100%; } }
+
+/* The player stays mounted in the banner on every Studio page. */
+@media(max-width:1200px){.yue2-app header.topbar{gap:10px}.yue2-app .brand-version{display:none}.yue2-app .status-pill{max-width:180px;min-width:0}.topbar-spacer{min-width:0}}
+@media(max-width:900px){.yue2-app header.topbar .status-pill{display:none}.yue2-app .brand-name{font-size:13px}}
+@media(max-width:680px){.yue2-app > header.topbar{height:172px;min-height:172px;flex-basis:172px;flex-wrap:wrap;align-content:center;gap:6px 10px}.yue2-app header.topbar .global-player{order:10;flex-basis:100%}.yue2-app .left-sidebar{top:172px}.yue2-app .request-form .desk-nav{top:215px}}
+
+@media(min-width:681px){.yue2-app > header.topbar{height:124px;min-height:124px;flex-basis:124px}.yue2-app .studio-frame{height:calc(100dvh - 124px)}}

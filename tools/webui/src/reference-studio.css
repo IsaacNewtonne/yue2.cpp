@@ -15,7 +15,7 @@
 .yue2-app .sampling-control input[type=range]::-webkit-slider-thumb {appearance:none;width:10px;height:10px;border-radius:50%;background:#70f0d8;border:1px solid var(--accent)}
 .yue2-app .sampling-control input[type=range]::-moz-range-thumb {width:10px;height:10px;border-radius:50%;background:#70f0d8;border:1px solid var(--accent)}
 .yue2-app .sampling-control input[type=range]:disabled {opacity:.7}
-@media(max-width:680px) {.yue2-app header.topbar {flex-wrap:nowrap!important;gap:7px!important}.yue2-app .status-pill {display:none!important}.yue2-app .topbar-theme {margin-left:auto}.yue2-app .request-form #arrangement-workbench .meta-grid label {font-size:10px}}
+@media(max-width:680px) {.yue2-app header.topbar {flex-wrap:wrap;gap:7px}.yue2-app .status-pill {display:none!important}.yue2-app .topbar-theme {margin-left:auto}.yue2-app .request-form #arrangement-workbench .meta-grid label {font-size:10px}}
 .sr-only {position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .yue2-app .topbar-theme select {width:145px;height:35px;padding:0 12px;border-radius:12px;background:var(--bg-input);font-size:12px}
 .yue2-app .brand-name {font-size:21px;letter-spacing:-.04em}

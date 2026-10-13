@@ -6,20 +6,13 @@
 	import { app } from '../lib/state.svelte.js';
 	import { updateSong } from '../lib/db.js';
 	import type { Song } from '../lib/types.js';
-	import {
-		getContext,
-		registerPlaying,
-		unregisterPlaying,
-		findSyncPosition,
-		playingCount,
-		getPlaybackAnalyser
-	} from '../lib/audio.js';
+	import { selectTrack, seek, toggleTrack } from '../lib/player.svelte.js';
 
 	let {
 		song,
 		audio,
-		playing = $bindable(false),
-		time = $bindable(0),
+		playing = false,
+		time = 0,
 		dur = $bindable(0),
 		selectable = false,
 		rangeStart = $bindable(0),
@@ -37,18 +30,9 @@
 
 	let canvas: HTMLCanvasElement;
 	let peaks: Float32Array = new Float32Array();
-	let raf = 0;
 	let cw = 0;
 	let ch = 0;
 
-	// Web Audio API
-	let actx: AudioContext | null = null;
-	let gain: GainNode | null = null;
-	let decoded = $state.raw<AudioBuffer | null>(null);
-	let source: AudioBufferSourceNode | null = null;
-	let playAt = 0;
-	let playOffset = 0;
-	let playingId = -1;
 	let audioReady = $state(false);
 	let visible = $state(false);
 	let decodeError = $state('');
@@ -66,10 +50,6 @@
 		canvas.width = cw;
 		canvas.height = ch;
 
-		actx = getContext();
-		gain = actx.createGain();
-		gain.gain.value = untrack(() => app.volume);
-		gain.connect(getPlaybackAnalyser());
 
 		if (song.peaks) {
 			peaks = song.peaks;
@@ -79,16 +59,12 @@
 		audioReady = true;
 		const observer = new IntersectionObserver(entries => { visible = entries[0].isIntersecting; }, {rootMargin:'100px'});
 		observer.observe(canvas);
-		const stop = () => { playing = false; };
-		window.addEventListener('yue2-navigation',stop);
 
 		canvas.addEventListener('touchstart', preventTouch, { passive: false });
 		canvas.addEventListener('touchmove', preventTouch, { passive: false });
 
 		return () => {
-			observer.disconnect(); window.removeEventListener('yue2-navigation',stop); gain?.disconnect();
-			stopPlayback();
-			cancelLoop();
+			observer.disconnect();
 			canvas.removeEventListener('touchstart', preventTouch);
 			canvas.removeEventListener('touchmove', preventTouch);
 		};
@@ -97,22 +73,22 @@
 	$effect(() => {
 		const selectedAudio = audio ?? song.audio;
 		retry;
-		if (!audioReady || !actx) return;
+		if (!audioReady) return;
 		let cancelled = false;
 		const isMasteredAudio = selectedAudio === song.audio;
 		const revision=song.mediaRevision??0;
-		decoded = null;
 		peaks = isMasteredAudio && song.peaks ? song.peaks : new Float32Array();
 		if (isMasteredAudio && song.peaks) dur = song.duration;
 		// Drawing reads the moving playhead. Do not make decoding depend on it:
 		// cached (mastered) waveforms would otherwise restart on every frame.
 		untrack(draw);
-		if (!playing && (!visible || (peaks.length && retry===0))) return;
+		loading = false;
+		if (!visible || (peaks.length && retry === 0)) return;
 		loading = true; decodeError = '';
 		decodeAudio(selectedAudio)
 			.then((buf) => {
 				if (cancelled) return;
-				decoded = buf; loading = false;
+				loading = false;
 				dur = buf.duration;
 				if (isMasteredAudio && !song.peaks) {
 					song.peaks = computePeaks(buf, WAVEFORM_BINS);
@@ -122,10 +98,9 @@
 				peaks = isMasteredAudio ? (song.peaks ?? computePeaks(buf, WAVEFORM_BINS)) : computePeaks(buf, WAVEFORM_BINS);
 				draw();
 			})
-			.catch(() => { if (!cancelled) { loading = false; playing = false; decodeError = 'Audio cannot be decoded. Retry or remove this track from its menu.'; } });
+			.catch(() => { if (!cancelled) { loading = false; decodeError = 'Audio cannot be decoded. Retry or remove this track from its menu.'; } });
 		return () => {
 			cancelled = true;
-			stopPlayback();
 		};
 	});
 
@@ -149,31 +124,7 @@
 		if (peaks.length > 0) draw();
 	});
 
-	// play/pause
-	$effect(() => {
-		const wantPlay = playing;
-		if (!decoded || !actx) return;
-        const context = actx;
-		untrack(() => {
-		if (wantPlay) {
-			if (context.state === 'suspended') void context.resume();
-			const syncPos = findSyncPosition(dur, playingId);
-			if (syncPos >= 0) {
-				// schedule start 10ms in the future, compensate offset so both
-				// tracks play the same sample at the same audio frame
-				const now = context.currentTime;
-				const delta = 0.01;
-				startPlayback(syncPos + delta, now + delta);
-			} else {
-				startPlayback(untrack(() => time));
-			}
-			startLoop();
-		} else {
-			stopPlayback();
-			cancelLoop();
-		}
-        });
-	});
+	$effect(() => { time; if (audioReady) untrack(draw); });
 
 	function computePeaks(buf: AudioBuffer, numBins: number): Float32Array {
 		const raw = buf.getChannelData(0);
@@ -192,54 +143,7 @@
 		return out;
 	}
 
-	function currentTime(): number {
-		if (!actx || !source) return time;
-		return playOffset + (actx.currentTime - playAt);
-	}
-
-	function startPlayback(offset: number, when?: number) {
-		stopPlayback();
-		if (!actx || !decoded || !gain) return;
-		const s = actx.createBufferSource();
-		s.buffer = decoded;
-		s.connect(gain);
-		s.onended = () => {
-			if (source === s) {
-				source = null;
-				playing = false;
-				time = 0;
-				if (playingId >= 0) {
-					unregisterPlaying(playingId);
-					playingId = -1;
-				}
-				draw();
-			}
-		};
-		playOffset = offset;
-		if (when != null) {
-			playAt = when;
-			s.start(when, offset);
-		} else {
-			playAt = actx.currentTime;
-			s.start(0, offset);
-		}
-		source = s;
-		playingId = registerPlaying(dur, currentTime);
-	}
-
-	function stopPlayback() {
-		if (playingId >= 0) {
-			unregisterPlaying(playingId);
-			playingId = -1;
-		}
-		if (source) {
-			source.onended = null;
-			try {
-				source.stop();
-			} catch {}
-			source = null;
-		}
-	}
+	function currentTime(): number { return time; }
 
 	// draw: red (range) > green (played) > gray
 	// cursors: red at range edges, green at playhead (on top)
@@ -288,38 +192,6 @@
 		}
 	}
 
-	// loop logic lives here: when playhead passes rangeEnd, restart at rangeStart
-	function tick() {
-		if (!source) return;
-		if (gain) gain.gain.value = app.volume / Math.sqrt(playingCount());
-		const t = currentTime();
-		if (t >= dur) {
-			stopPlayback();
-			playing = false;
-			time = 0;
-			draw();
-			return;
-		}
-		if (rangeEnd > rangeStart && t >= rangeEnd) {
-			startPlayback(Math.max(0, rangeStart));
-		}
-		time = currentTime();
-		draw();
-		raf = requestAnimationFrame(tick);
-	}
-
-	function startLoop() {
-		cancelLoop();
-		raf = requestAnimationFrame(tick);
-	}
-
-	function cancelLoop() {
-		if (raf) {
-			cancelAnimationFrame(raf);
-			raf = 0;
-		}
-	}
-
 	function xToNorm(clientX: number): number {
 		if (!canvas) return 0;
 		const rect = canvas.getBoundingClientRect();
@@ -328,8 +200,8 @@
 
 	function seekTo(norm: number) {
 		if (dur <= 0) return;
-		time = Math.max(0, Math.min(1, norm)) * dur;
-		if (source) startPlayback(time);
+		selectTrack(song, audio ?? song.audio);
+		seek(Math.max(0, Math.min(1, norm)) * dur);
 		draw();
 	}
 
@@ -392,7 +264,7 @@
 	}
 	function onKeyDown(event: KeyboardEvent) {
 		if (selectable || event.isComposing) return;
-		if (event.key === ' ') { event.preventDefault(); playing = !playing; return; }
+		if (event.key === ' ') { event.preventDefault(); toggleTrack(song, audio ?? song.audio); return; }
 		if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key) || dur <= 0) return;
 		event.preventDefault();
 		const delta = ['ArrowRight', 'ArrowUp'].includes(event.key) ? 5 : -5;

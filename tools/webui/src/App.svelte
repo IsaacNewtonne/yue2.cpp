@@ -17,7 +17,7 @@
 	import Albums from './components/Albums.svelte';
 	import SongList from './components/SongList.svelte';
 	import StudioRail from './components/StudioRail.svelte';
-	import ReactiveSpeaker from './components/ReactiveSpeaker.svelte';
+	import GlobalPlayer from './components/GlobalPlayer.svelte';
 	import Toast from './components/Toast.svelte';
 	import SavedPresets from './components/SavedPresets.svelte';
 
@@ -69,9 +69,6 @@
 		return () => clearInterval(id);
 	});
 
-	function onVolume(e: Event) {
-		app.volume = Number((e.target as HTMLInputElement).value);
-	}
 	$effect(() => { currentPage; window.dispatchEvent(new Event('yue2-navigation')); });
 	$effect(() => { const navigate = (event: Event) => focusSection((event as CustomEvent<string>).detail); window.addEventListener('yue2-navigate', navigate); return () => window.removeEventListener('yue2-navigate',navigate); });
 	function focusSection(id: string) {
@@ -110,7 +107,7 @@
 			{#if app.props}<Wifi size={13} />{:else}<WifiOff size={13} />{/if}<span>{statusText}</span><span class="status-chevron">⌄</span>
 		</div>
 		<div class="topbar-spacer"></div>
-		<div class="volume"><ReactiveSpeaker compact /><input type="range" min="0" max="1" step="0.01" value={app.volume} oninput={onVolume} aria-label="Playback volume" /></div>
+		<GlobalPlayer />
 		<label class="topbar-theme"><span class="sr-only">Color theme</span><select aria-label="Color theme" value={theme} onchange={e => setTheme(e.currentTarget.value as Theme)}><option value="studio">Studio Glass</option><option value="mint">Mint</option><option value="dark">Dark</option><option value="cyberpunk">Cyberpunk</option><option value="colorful">Colorful</option><option value="orange">Orange Voltage</option><option value="burnt-orange">Classic</option></select></label>
   <a class="settings-shortcut" href="#settings" onclick={() => focusSection('settings')} aria-label="Studio settings"><Settings size={17} /></a>
 	</header>
@@ -302,17 +299,6 @@
 	.status-pill.offline {
 		color: var(--error);
 		border-color: rgba(248, 113, 113, 0.35);
-	}
-	.volume {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		color: var(--fg-dim);
-	}
-	.volume input[type='range'] {
-		width: 96px;
-		cursor: pointer;
-		accent-color: var(--accent);
 	}
 	main {
 		flex: 1;
