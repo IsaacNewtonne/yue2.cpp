@@ -26,7 +26,7 @@ try {
    const samples=8000*30,bytes=new ArrayBuffer(44+samples*2),view=new DataView(bytes);
    const text=(at,value)=>[...value].forEach((c,i)=>view.setUint8(at+i,c.charCodeAt(0)));
    text(0,'RIFF');view.setUint32(4,36+samples*2,true);text(8,'WAVEfmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);view.setUint32(24,8000,true);view.setUint32(28,16000,true);view.setUint16(32,2,true);view.setUint16(34,16,true);text(36,'data');view.setUint32(40,samples*2,true);
-   for(let i=0;i<samples;i++)view.setInt16(44+i*2,Math.sin(i/8000*440*Math.PI*2)*1000,true);
+   for(let i=0;i<samples;i++)view.setInt16(44+i*2,Math.sin(i/8000*80*Math.PI*2)*1000*(.02+.98*Math.max(0,Math.sin(i/8000*2*Math.PI*2))**2),true);
    for(const name of ['First fixture','Second fixture','Third fixture'])tx.objectStore('songs').put({name,created:Date.now(),audio:new Blob([bytes],{type:'audio/wav'}),originalAudio:new Blob([bytes],{type:'audio/wav'}),duration:30,format:'wav',style:'Test',request:{style:'Test',lyrics:'',abc_sampling:{},semantic_sampling:{}},peaks:new Float32Array(4096).fill(.2)});
    tx.oncomplete=()=>{db.close();window.dispatchEvent(new Event('yue2-library-changed'));resolve();};tx.onerror=()=>reject(tx.error);
   };request.onerror=()=>reject(request.error);
@@ -35,6 +35,18 @@ try {
  await nav.getByRole('button',{name:/^Library/}).click();
  await page.getByRole('button',{name:'Play First fixture',exact:true}).click();
  await page.waitForFunction(()=>window.testAudio[0]?.currentTime>.3&&!window.testAudio[0].paused);
+ await page.getByRole('slider',{name:'Playback volume left',exact:true}).fill('0.11');
+ const cabinet=page.locator('.global-player .speaker-cabinet').first();
+ const stationary=await cabinet.boundingBox();
+ const motion=await cabinet.evaluate(async el=>{const values=[];for(let i=0;i<40;i++){values.push(Number(el.style.getPropertyValue('--excursion')));await new Promise(r=>setTimeout(r,40));}return values;});
+ assert.ok(Math.max(...motion)>.35,'visible cone motion at eleven percent volume');
+ assert.ok(Math.max(...motion)-Math.min(...motion)>.08,'cone follows bass changes');
+ assert.deepEqual(await cabinet.boundingBox(),stationary,'cabinet stays stable');
+ await page.getByRole('button',{name:'Pause playback',exact:true}).click();await page.waitForTimeout(1000);
+ assert.ok(await cabinet.evaluate(el=>Number(el.style.getPropertyValue('--excursion')))<.005,'cone settles on pause');
+ await page.emulateMedia({reducedMotion:'reduce'});await page.getByRole('button',{name:'Play playback',exact:true}).click();await page.waitForTimeout(150);
+ assert.equal(await cabinet.evaluate(el=>Number(el.style.getPropertyValue('--excursion'))),0,'reduced motion stays still');
+ await page.emulateMedia({reducedMotion:'no-preference'});
  const start=await page.evaluate(()=>window.testAudio[0].currentTime);
  for(const name of ['Albums','Create','Home','Library'])await nav.getByRole('button',{name:new RegExp('^'+name)}).click();
  await page.waitForFunction(t=>window.testAudio[0].currentTime>t+.5,start);
