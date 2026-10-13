@@ -68,6 +68,19 @@ try {
  }
  await page.screenshot({path:'build/ui-review/global-player-mobile.png'});
  await page.setViewportSize({width:1536,height:900});await page.screenshot({path:'build/ui-review/global-player-desktop.png'});
+ for(const theme of ['orange','studio','dark','mint','cyberpunk','colorful','burnt-orange']) {
+  await page.getByLabel('Color theme',{exact:true}).selectOption(theme);
+  await page.mouse.move(0,0);await page.waitForTimeout(700);
+  const cassette=page.locator('.cassette').nth(1),before=await cassette.evaluate(el=>getComputedStyle(el).transform);
+  await cassette.hover();
+  for(const delay of [30,160,350]) {await page.waitForTimeout(delay);assert.equal(await cassette.evaluate(el=>getComputedStyle(el).transform),before,theme+' hover preserves cassette position');}
+  assert.equal(await cassette.evaluate(el=>getComputedStyle(el).transitionDuration),'0.65s, 0.5s',theme+' retains smooth carousel timing');
+  const stage=await page.locator('.carousel-stage').boundingBox(),controls=await page.locator('.transport-buttons').boundingBox();
+  assert.ok(Math.abs(stage.x+stage.width/2-controls.x-controls.width/2)<1,theme+' centered transport');
+ }
+ await page.getByLabel('Color theme',{exact:true}).selectOption('orange');
+ await page.mouse.move(0,0);await page.waitForTimeout(700);
+ await page.screenshot({path:'build/ui-review/global-player-desktop.png'});
  await page.getByRole('button',{name:'Play cassette Second fixture',exact:true}).click();
  await page.waitForFunction(()=>document.querySelector('.now-playing').textContent==='Second fixture'&&!window.testAudio[0].paused,{},{timeout:5000}).catch(async error=>{console.log(await page.evaluate(()=>({title:document.querySelector('.now-playing').textContent,paused:window.testAudio[0].paused,buttons:[...document.querySelectorAll('.cassette')].map(b=>({label:b.getAttribute('aria-label'),chosen:b.getAttribute('aria-current')}))})));throw error;});
  await page.getByRole('group',{name:'Cassette track carousel'}).hover();await page.mouse.wheel(0,150);

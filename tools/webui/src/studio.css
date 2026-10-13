@@ -251,6 +251,6 @@ html { scroll-behavior: smooth; scroll-padding-top: 90px; }
 /* The player stays mounted in the banner on every Studio page. */
 @media(max-width:1200px){.yue2-app header.topbar{gap:10px}.yue2-app .brand-version{display:none}.yue2-app .status-pill{max-width:180px;min-width:0}.topbar-spacer{min-width:0}}
 @media(max-width:900px){.yue2-app header.topbar .status-pill{display:none}.yue2-app .brand-name{font-size:13px}}
-@media(max-width:680px){.yue2-app > header.topbar{height:172px;min-height:172px;flex-basis:172px;flex-wrap:wrap;align-content:center;gap:6px 10px}.yue2-app header.topbar .global-player{order:10;flex-basis:100%}.yue2-app .left-sidebar{top:172px}.yue2-app .request-form .desk-nav{top:215px}}
+@media(max-width:680px){.yue2-app > header.topbar{height:190px;min-height:190px;flex-basis:190px;flex-wrap:wrap;align-content:center;gap:6px 10px}.yue2-app header.topbar .global-player{order:10;flex-basis:100%}.yue2-app .left-sidebar{top:190px}.yue2-app .request-form .desk-nav{top:233px}}
 
-@media(min-width:681px){.yue2-app > header.topbar{height:124px;min-height:124px;flex-basis:124px}.yue2-app .studio-frame{height:calc(100dvh - 124px)}}
+@media(min-width:681px){.yue2-app > header.topbar{height:144px;min-height:144px;flex-basis:144px}.yue2-app .studio-frame{height:calc(100dvh - 144px)}}
