@@ -5,6 +5,7 @@
 	import { updateSong } from '../lib/db.js';
 	import { player, isCurrent, toggleTrack } from '../lib/player.svelte.js';
 	import Waveform from './Waveform.svelte';
+	import LiveVisualizer from './LiveVisualizer.svelte';
 	import ReactiveSpeaker from './ReactiveSpeaker.svelte';
 	import LogCard from './LogCard.svelte';
 	import ArtworkCover from './ArtworkCover.svelte';
@@ -13,8 +14,11 @@
 		onOpenLibrary: () => void;
 		showGenerated?: boolean;
 	} = $props();
-	let selectedId = $state<number | undefined>(undefined);
-	let duration = $state(0);
+	function savedView(): 'waveform' | 'spectrum' | 'oscilloscope' {
+        try { const view = localStorage.getItem('yue2-preview-view'); return view === 'spectrum' || view === 'oscilloscope' ? view : 'waveform'; } catch { return 'waveform'; }
+    }
+    let view = $state(savedView());
+    function changeView(event: Event) { view = (event.currentTarget as HTMLSelectElement).value as typeof view; try { localStorage.setItem('yue2-preview-view', view); } catch {} }
 	let previewElement = $state<HTMLElement>();
 	async function fullscreen() {
 		try { if (document.fullscreenElement) await document.exitFullscreen(); else await previewElement?.requestFullscreen(); }
@@ -34,14 +38,12 @@
 		link.href = url; link.download = `${song.name.replace(/[<>:"/\\|?*]/g, '_') || 'track'}.${ext}`;
 		link.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
 	}
-	let selectedSong = $derived(app.songs.find(song => song.id === selectedId) ?? app.songs[0]);
+	let selectedSong = $derived((player.song && (app.songs.find(song => song.id === player.song?.id) ?? player.song)) || app.songs[0]);
+    let selectedAudio = $derived(selectedSong && isCurrent(selectedSong) ? (player.audio ?? selectedSong.audio) : selectedSong?.audio);
+    let duration = $derived(selectedSong && isCurrent(selectedSong) ? player.duration : selectedSong?.duration ?? 0);
 	let playing = $derived(!!selectedSong && isCurrent(selectedSong) && player.playing);
 	let time = $derived(selectedSong && isCurrent(selectedSong) ? player.time : 0);
 	let recentSongs = $derived(app.songs.slice(0, 3));
-	function selectSong(song: Song) {
-		if (selectedId === song.id) return;
-		selectedId = song.id;
-	}
 	function formatTime(value: number) {
 		const seconds = Math.floor(value || 0);
 		return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
@@ -56,9 +58,10 @@
 			{#if selectedSong}
 				{#if selectedSong.artwork}<div class="rail-artwork"><ArtworkCover artwork={selectedSong.artwork} title={selectedSong.name} /></div>{/if}
 				<div class="preview-track-title"><strong>{selectedSong.name}</strong><span>{selectedSong.style || 'Custom sound'} · {formatTime(duration || selectedSong.duration)}</span></div>
-				<div class="preview-player">
-					<button class="preview-play" type="button" aria-pressed={playing} aria-label={playing ? 'Pause preview' : 'Play preview'} onclick={() => toggleTrack(selectedSong)}>{#if playing}<Pause size={18} fill="currentColor" />{:else}<Play size={18} fill="currentColor" />{/if}</button>
-					<div class="preview-wave"><Waveform song={selectedSong} {playing} {time} bind:dur={duration} /></div>
+				<label class="preview-view">Visualizer<select aria-label="Preview visualizer" value={view} onchange={changeView}><option value="waveform">Track waveform</option><option value="spectrum">Spectrum bars</option><option value="oscilloscope">Oscilloscope</option></select></label>
+                <div class="preview-player">
+					<button class="preview-play" type="button" aria-pressed={playing} aria-label={playing ? 'Pause preview' : 'Play preview'} onclick={() => toggleTrack(selectedSong, selectedAudio)}>{#if playing}<Pause size={18} fill="currentColor" />{:else}<Play size={18} fill="currentColor" />{/if}</button>
+					<div class="preview-wave">{#if view === 'waveform'}{#key selectedAudio}<Waveform song={selectedSong} audio={selectedAudio} {playing} {time} dur={duration} />{/key}{:else}{#key view}<LiveVisualizer mode={view} />{/key}{/if}</div>
 				</div>
 				<div class="preview-time"><span>{formatTime(time)}</span><span>{formatTime(duration)}</span></div>
 			{:else}
@@ -78,7 +81,7 @@
 				<div class="recent-list">
 					{#each recentSongs as song (song.id)}
 						<div class="recent-track" class:selected={selectedSong?.id === song.id}>
-						<button class="recent-select" type="button" aria-label={`${selectedSong?.id === song.id && playing ? 'Pause' : 'Play'} ${song.name}`} onclick={() => { selectSong(song); toggleTrack(song); }}>
+						<button class="recent-select" type="button" aria-label={`${selectedSong?.id === song.id && playing ? 'Pause' : 'Play'} ${song.name}`} onclick={() => { toggleTrack(song); }}>
 							<span class="recent-play">{#if selectedSong?.id === song.id && playing}<Pause size={15} fill="currentColor" />{:else}<Play size={15} fill="currentColor" />{/if}</span>
 							<span class="recent-info"><strong>{song.name}</strong><small>{song.style || 'Custom sound'} · {formatTime(song.duration)}</small></span>
 							<span class="mini-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
@@ -97,6 +100,7 @@
 </aside>
 
 <style>
+ .preview-view{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 2px 9px;color:var(--fg-dim);font-size:10px}.preview-view select{max-width:160px;padding:5px 8px;border:1px solid var(--border);border-radius:7px;background:var(--bg-input);color:var(--fg);font:inherit}
 	.preview-expand {display:flex;align-items:center;gap:6px;padding:7px 8px;border:1px solid var(--border);border-radius:7px;background:var(--bg-input);color:var(--fg-dim);font-size:10px;cursor:pointer}
 	.preview-empty small {display:block;font-size:10px;color:var(--fg-faint);margin-top:5px}
 	.preview-card:fullscreen {display:flex;flex-direction:column;justify-content:center;padding:8vw;background:var(--bg);border:0;border-radius:0}

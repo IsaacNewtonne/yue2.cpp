@@ -60,6 +60,26 @@ try {
  assert.equal(await page.evaluate(()=>window.testAudio[0].paused),true);
  await page.getByRole('button',{name:'Play preview',exact:true}).click();
  assert.equal(await page.evaluate(()=>window.testAudio[0].src),source,'preview resumes same source');
+ assert.equal(await page.locator('.preview-track-title strong').innerText(),'Third fixture');
+ await page.getByRole('button',{name:'Previous track',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('.preview-track-title strong').textContent==='First fixture');
+ await page.locator('.preview-wave').getByRole('slider',{name:'Seek in First fixture'}).waitFor();
+ const visualSource=await page.evaluate(()=>window.testAudio[0].src);
+ await page.getByLabel('Preview visualizer',{exact:true}).selectOption('spectrum');
+ await page.getByRole('img',{name:'Live audio spectrum'}).waitFor();await page.waitForTimeout(500);
+ const spectrum=await page.locator('.preview-wave canvas').evaluate(el=>el.toDataURL());
+ await page.getByRole('button',{name:'Pause preview',exact:true}).click();await page.waitForTimeout(100);
+ assert.notEqual(await page.locator('.preview-wave canvas').evaluate(el=>el.toDataURL()),spectrum,'spectrum responds to playback');
+ await page.getByRole('button',{name:'Play preview',exact:true}).click();
+ await page.getByLabel('Preview visualizer',{exact:true}).selectOption('oscilloscope');
+ await page.getByRole('img',{name:'Live audio oscilloscope'}).waitFor();await page.waitForTimeout(200);
+ assert.notEqual(await page.locator('.preview-wave canvas').evaluate(el=>el.toDataURL()),spectrum,'distinct oscilloscope view');
+ assert.equal(await page.evaluate(()=>window.testAudio[0].src),visualSource,'visualizer selection preserves audio source');
+ await nav.getByRole('button',{name:'Albums',exact:true}).click();await nav.getByRole('button',{name:'Create',exact:true}).click();
+ assert.equal(await page.getByLabel('Preview visualizer',{exact:true}).inputValue(),'oscilloscope','view persists across tabs');
+ assert.equal(await page.locator('.preview-track-title strong').innerText(),'First fixture','preview follows current song after remount');
+ await page.getByLabel('Preview visualizer',{exact:true}).selectOption('waveform');
+
  await mkdir('build/ui-review',{recursive:true});
  for(const width of [1920,1536,1280,1024,900,768,390]){
   await page.setViewportSize({width,height:900});
