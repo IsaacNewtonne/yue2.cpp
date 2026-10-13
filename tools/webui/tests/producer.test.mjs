@@ -63,6 +63,10 @@ test('duration accounts for tempo, delivery and instrumental space but preserves
  assert.ok(estimatedDuration({...p,presence:40},lyrics)>estimatedDuration({...p,presence:90},lyrics));
  assert.equal(estimatedDuration(p,lyrics),estimatedDuration(p,'[Verse]\n'+lyrics));
  assert.equal(applyProducer({...base,duration:123},p).duration,123);
+ assert.equal(applyProducer(base,p).duration,0,'Auto must not become an estimated hard cutoff');
+ assert.equal(applyProducer({...base,duration:undefined},p).duration,undefined);
+ assert.match(applyProducer(base,p).style,/final notes decay into silence/);
+ assert.match(applyProducer(base,p).style,/Complete every supplied lyric section/);
  assert.equal(applyProducer(base,{...p,enabled:false}),base);
 });
 test('persisted controls are bounded and independent', () => {

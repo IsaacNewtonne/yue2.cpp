@@ -33,10 +33,15 @@ void request_init(Yue2Request * r) {
 
     r->abc_sampling      = YUE2_ABC_SAMPLING;
     r->semantic_sampling = YUE2_SEMANTIC_SAMPLING;
+    // Application ceilings, not changes to checkpoint sampling probabilities.
+    // The old 9000-frame ceiling silently overrode the UI's ten-minute limit.
+    r->abc_sampling.max_tokens = 8192;
+    r->semantic_sampling.max_tokens = 15000;
 
     r->output_format = OUTPUT_FORMAT_MP3;
     r->mp3_bitrate   = 320;
     r->mastering_profile = "off";
+    r->generation_warning = "";
 }
 
 static inline std::string yy_str(yyjson_val * v) {
@@ -264,6 +269,9 @@ std::string request_to_json(const Yue2Request * r, bool sparse) {
         yyjson_mut_obj_add_strncpy(doc, root, "mastering_profile", r->mastering_profile.c_str(), r->mastering_profile.size());
     }
 
+    if (!r->generation_warning.empty()) {
+        yyjson_mut_obj_add_strcpy(doc, root, "generation_warning", r->generation_warning.c_str());
+    }
     char *      json = yyjson_mut_write(doc, WRITE_FLAGS, NULL);
     std::string out  = json ? json : "{}";
     if (json) {

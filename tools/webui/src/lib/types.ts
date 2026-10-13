@@ -31,6 +31,7 @@ export interface Yue2Request {
 	peak_clip?: number;
 	mp3_bitrate?: number;
 	mastering_profile?: string;
+	generation_warning?: string;
 }
 
 // GET /props response

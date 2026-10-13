@@ -684,6 +684,9 @@ static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
     std::vector<std::string> request_parts;
     for (size_t t = 0; t < songs.size(); t++) {
         Yue2Song & song = songs[t];
+        song_declick_end(song.audio.data(), song.T_audio, YUE2_SAMPLE_RATE);
+        const std::string ending_warning = song.truncated ?
+            "Generation reached a composition or length limit before its natural ending. This take may be incomplete; use Auto duration and a fresh composition, or shorten the lyrics." : "";
         if (request.mastering_profile != "off") {
             std::vector<float> mastered;
             std::string error;
@@ -709,6 +712,7 @@ static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
             Yue2Request original = request_replay(request, song.score.empty() ? request.abc : song.score,
                                                   pipeline_format_tokens(song.tokens), (int) t / M, (int) t % M);
             original.mastering_profile = "off";
+            original.generation_warning = ending_warning;
             request_parts.push_back(request_to_json(&original));
             song.audio.swap(mastered);
         // Normalization belongs to the output stage; WAV32 keeps the full range.
@@ -725,6 +729,7 @@ static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
         }
         Yue2Request replay = request_replay(request, song.score.empty() ? request.abc : song.score,
                                             pipeline_format_tokens(song.tokens), (int) t / M, (int) t % M);
+        replay.generation_warning = ending_warning;
         request_parts.push_back(request_to_json(&replay));
     }
 

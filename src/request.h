@@ -24,7 +24,8 @@ struct Yue2Request {
     std::string cot;  // "full"
 
     // target length in seconds, the budget the semantic stage stops at. The
-    // preset of the stage caps it, so the shorter of the two wins.
+    // preset of the stage caps it, so the shorter of the two wins. Zero lets
+    // the model finish naturally, within the ten-minute/context safety limit.
     float duration;  // 360
 
     // generation. Two seeds: the token draw consumes lm_seed as a Philox key,
@@ -70,6 +71,7 @@ struct Yue2Request {
     // WAV outputs ignore this field.
     int mp3_bitrate;  // 128
     std::string mastering_profile;  // "off", "streaming" or "broadcast"
+    std::string generation_warning; // output-only: a stage could not finish
 };
 
 // fills every field with its default

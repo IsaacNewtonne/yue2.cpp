@@ -46,6 +46,7 @@ export function songPlan(p: ProducerSettings): string {
 }
 export function producerDirection(p: ProducerSettings): string {
  const parts = [`Tempo: approximately ${p.bpm} BPM.`, delivery(p), `Arrangement: ${songPlan(p)}.`];
+ parts.push('Let the song length follow the supplied lyrics, tempo, phrasing and instrumental sections. Complete every supplied lyric section in order. After the final lyric, resolve the harmony with a short musical outro and let the final notes decay into silence. End there; do not restart the groove or extend with unrelated sounds. These are arrangement directions, not performed words.');
  if (p.presence > 0) {
   parts.push(`Singing balance: approximately ${p.singing}% melodic singing and ${100 - p.singing}% rap or spoken phrasing within vocal passages.`);
   parts.push(`Vocal presence: approximately ${p.presence}% of the arrangement, leaving ${100 - p.presence}% for instrumental space and breaths.`);
@@ -109,8 +110,7 @@ export function applyProducer(request: Yue2Request, settings: ProducerSettings):
  const style = request.style.replace(/(?:^|\n\n)Song direction:\n[\s\S]*$/, '').trim();
  const lyrics=p.presence===0 ? '' : castLyrics(request.lyrics || '',p);
  return { ...request, style: `${style}\n\nSong direction:\n${producerDirection(p)}\n${structureDirection(lyrics,p.singing)}`.trim(),
-  lyrics,
-  duration: request.duration === 0 ? estimatedDuration(p, request.lyrics || '') : request.duration };
+  lyrics };
 }
 export function lyricWarnings(p: ProducerSettings, lyrics: string): string[] {
  if (!p.enabled) return [];

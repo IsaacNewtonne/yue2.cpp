@@ -1,7 +1,7 @@
 import type { Yue2Request } from './types.js';
 
 // Modest composition-only adjustments around the checkpoint's published 0.7 default.
-// Codec sampling, token budgets and CFG stay at model defaults. These are starting
+// Codec sampling and CFG stay at model defaults; budgets follow server ceilings. These are starting
 // points, not genre-specific quality measurements or a mastering processor.
 const groups = [
  { name: 'Rhythmic focus', temperature: .65, keys: ['boom_bap','modern_trap','liquid_dnb','deep_house','disco_funk','afrobeat','latin_reggaeton','uk_garage','minimal_techno','brass_funk','festival_electronic'], match: /\b(trap|hip.?hop|boom.?bap|house|techno|garage|drum.{0,3}bass|reggaeton|funk|afrobeat)\b/i },
@@ -24,8 +24,8 @@ export function automaticProfile(ids: string[], weights: Record<string, number>,
  const base = defaults?.abc_sampling?.temperature ?? .7;
  const scoreTemperature = Math.round(Math.max(.1, Math.min(1.5, base + temperature / total - .7)) * 100) / 100;
  const settings = {
-  abc_sampling: { ...(defaults?.abc_sampling ?? {temperature:.7,top_p:.9,top_k:30,repetition_penalty:1.005,penalty_window:100,min_tokens:32,max_tokens:4096}), temperature: scoreTemperature },
-  semantic_sampling: { ...(defaults?.semantic_sampling ?? {temperature:1,top_p:.95,top_k:100,repetition_penalty:1.2,penalty_window:50,min_tokens:200,max_tokens:9000}) },
+  abc_sampling: { ...(defaults?.abc_sampling ?? {temperature:.7,top_p:.9,top_k:30,repetition_penalty:1.005,penalty_window:100,min_tokens:32,max_tokens:8192}), temperature: scoreTemperature },
+  semantic_sampling: { ...(defaults?.semantic_sampling ?? {temperature:1,top_p:.95,top_k:100,repetition_penalty:1.2,penalty_window:50,min_tokens:200,max_tokens:15000}) },
   cfg_scale: defaults?.cfg_scale ?? -1,
   steps: defaults?.steps ?? 32,
   peak_clip: defaults?.peak_clip ?? 10,

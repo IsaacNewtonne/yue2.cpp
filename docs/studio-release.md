@@ -37,6 +37,54 @@ The build writes `build/Release-producer`. Activation refuses active native jobs
 
 Use `GET /health`, `/jobs` and `/capabilities` for readiness. Logs are `build/producer-server.err.log` and `.out.log`. A browser refresh loads the embedded UI. The browser library is IndexedDB tied to the browser profile and origin; keep using the same `http://localhost:8087` origin.
 
+## Natural song endings (13 October 2026)
+
+Studio Activity now uses a spinning SVG record with eight grooves filling
+outward toward a stationary white finish ring. It reaches 100% only after the
+job status confirms completion; cancelled/failed jobs and unknown progress
+remain distinct. Detailed logs default to collapsed. Reduced-motion settings
+disable rotation. `node tests/vinyl-activity.mjs` checks progress, completion,
+cancellation, unknown stages, the dropdown and mobile fit in an isolated
+mocked browser. Preview images are under `build/ui-review/vinyl`.
+
+The Lyrics section exposes all three lyric-style slots even with the assistant
+off. Each slot has a selector, description, influence control and removal;
+duplicates are disabled and the first non-muted style is marked primary.
+The same persisted blend feeds all selected profiles into the lyric prompt.
+Existing lyrics remain unchanged until a reviewed draft is accepted. Browser
+checks covered three-style prompts, relative weights, reload persistence,
+removal, mobile layout and existing-text preservation. Screenshots are under
+`build/ui-review/lyric-mix`.
+
+Auto duration now remains `duration: 0` through the producer controls. The
+performance model can emit its natural end token instead of being cut at a
+word-count or bar-count estimate. Automatic generation is still bounded by
+ten minutes, available context and any explicitly configured token budget.
+The application defaults allow 15,000 performance frames (ten minutes) and
+8,192 composition tokens; manual ceilings remain respected. Long prompts can
+reduce the available performance time below ten minutes.
+
+Producer directions request complete lyric sections, a resolved outro and
+decaying final notes. These are model instructions, not a guarantee of musical
+adherence. Export applies only an approximately 83 ms stereo end de-click,
+including WAV32. It does not detect or remove generated noisy passages.
+New takes whose score or performance hits a ceiling display an incomplete-take
+warning. Existing library audio is not changed.
+
+Checks: `cmake --build build --config Release --target test-song-ending`,
+`build/Release/test-song-ending.exe`, the producer/generation frontend tests,
+Svelte check, production build and `node tests/server-smoke.mjs
+build/Release-producer/yue-server.exe`.
+
+Live acceptance: a two-line refrain at 90 BPM, `duration: 0`, with a deliberately
+bounded 1,500-frame test budget emitted its own end token at frame 870 (34.8 s).
+The last six one-second RMS levels were -28.8, -29.4, -44.2, -47.7, -54.3 and
+-54.1 dBFS; both final samples were zero. No truncation warning was returned.
+Audio and measurements are under ignored `build/ending-check`. This verifies
+the short-render end path, not full-song perceptual quality. The unrelated
+storage-validation suite stalled during the broad test run and was stopped;
+the targeted regression suites and native/server checks completed.
+
 ## Optional services
 
 - ComfyUI: managed Pinokio app `inteliweb-comfyui`, loopback 8188. Qwen Image 2.1 Q4_K_M, Qwen3-VL 8B INT8 and matching VAE are required. Use Pinokio/pterm for its lifecycle.

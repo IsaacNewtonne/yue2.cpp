@@ -119,15 +119,16 @@
 	let mixedMusicPrompt = $state('');
 	let mixReady = $state(false);
 	let storageWarning = false;
-	let lyricPreset = $state('pack_02_syllable_dense');
 	let lyricMix = $state<string[]>(['pack_02_syllable_dense']);
 	let lyricMixWeight = $state<Record<string, number>>({ pack_02_syllable_dense: 100 });
-	const lyricProfile = $derived(LYRIC_PACK_STYLES.find(style => style.id === lyricMix[0]));
-	function selectPrimaryLyric(id: string) {
-		if (!LYRIC_STYLE_CHOICES.some(([key]) => key === id)) return;
-		lyricMix = [id, ...lyricMix.slice(1).filter(key => key !== id)].slice(0, 3);
-		lyricMixWeight = { ...lyricMixWeight, [id]: 100 };
-		lyricPreset = id;
+	const primaryLyric = $derived(lyricMix.find(id => (lyricMixWeight[id] ?? 50) > 0));
+	function selectLyricSlot(index: number, id: string) {
+		if (!id) { lyricMix = lyricMix.filter((_, i) => i !== index); return; }
+		if (!LYRIC_STYLE_CHOICES.some(([key]) => key === id) || (lyricMix.includes(id) && lyricMix[index] !== id)) return;
+		const next = [...lyricMix];
+		next[Math.min(index, next.length)] = id;
+		lyricMix = next.slice(0, 3);
+		lyricMixWeight = { ...lyricMixWeight, [id]: lyricMixWeight[id] ?? (index === 0 ? 100 : 50) };
 	}
 	let lyricTopic = $state('');
 	let lyricBusy = $state(false);
@@ -671,7 +672,7 @@
 	</section>
 	<ProducerControls disabled={busy || !!app.remix || !freshComposition} />
 	<details class="card words-card" id="lyrics-editor">
-		<summary class="card-head"><h3><span class="step-number">02</span> Lyrics &amp; writing</h3><span class="section-meta">{app.request.lyrics ? "Lyrics ready · click to edit" : "Add lyrics or write with AI"}</span></summary><div class="lyrics-content"><div class="card-head">
+		<summary class="card-head"><h3><span class="step-number">02</span> Lyrics &amp; writing</h3><span class="section-meta">{lyricMix.length} lyric {lyricMix.length === 1 ? "style" : "styles"} / {app.request.lyrics ? "Lyrics ready" : "Add lyrics or write with AI"}</span></summary><div class="lyrics-content"><div class="card-head">
 			<h3><span class="step-number">02</span> Lyrics &amp; writing</h3>
 			<div class="lyrics-heading-actions">
 				<span class="section-meta">{(app.request.lyrics || "").trim().split(/\s+/).filter(Boolean).length} words</span>
@@ -679,16 +680,33 @@
 				<input bind:this={lyricsFileInput} class="lyrics-file-input" type="file" accept=".txt,.md,.lrc,.srt,.vtt,text/plain" aria-label="Choose a lyrics text file" onchange={onLyricsFileSelected} />
 			</div>
 		</div>
-		<div class="lyric-profile-selector">
-			<label class="field"><span class="field-name">Lyric style <small>{LYRIC_PACK_STYLES.length} pack styles</small></span>
-			<select aria-label="Primary lyric style" value={lyricMix[0] || ''} onchange={e => selectPrimaryLyric(e.currentTarget.value)}>
-				<option value="" disabled>Choose a lyric style</option>
-				<optgroup label="Hip-Hop Lyric Styles · 30 Pack">{#each LYRIC_PACK_STYLES as style}<option value={style.id}>{style.name}</option>{/each}</optgroup>
-				<optgroup label="Previous lyric engines">{#each LEGACY_LYRIC_CHOICES as [id, name]}<option value={id}>{name}</option>{/each}</optgroup>
-			</select></label>
-			{#if lyricProfile}<p>{lyricProfile.description}</p>{/if}
-			<small>Guides the lyric assistant. Existing lyrics stay unchanged; open the assistant below to write a new draft.</small>
-		</div>
+		<div class="lyric-profile-selector lyric-blend" role="group" aria-label="Lyric style blend">
+            <div class="lyric-blend-heading"><div><strong>Lyric style mix</strong><p>Shape your writing with up to three styles.</p></div><span class="lyric-slot-count">{lyricMix.length} / 3 added</span></div>
+            <div class="lyric-blend-slots">
+                {#each [0, 1, 2] as index}
+                    {@const id = lyricMix[index]}
+                    {@const name = lyricPresets.find(([key]) => key === id)?.[1] || id}
+                    {@const profile = LYRIC_PACK_STYLES.find(style => style.id === id)}
+                    <div class="lyric-blend-slot" class:empty={!id} style={`--slot-color:${['#f3a2cf','#b8a4ef','#80d5d9'][index]}`}>
+                        <div class="lyric-slot-head"><span class="lyric-slot-number">0{index + 1}</span><span>{id ? primaryLyric === id ? 'Primary style' : (lyricMixWeight[id] ?? 50) === 0 ? 'Muted' : 'Supporting style' : 'Add a style'}</span>{#if id}<button type="button" class="lyric-remove" aria-label={`Remove ${name} lyric style`} onclick={() => selectLyricSlot(index, '')}><X size={14} /></button>{/if}</div>
+                        <select aria-label={`Lyric style ${index + 1}`} value={id || ''} onchange={e => selectLyricSlot(index, e.currentTarget.value)}>
+                            <option value="">{id ? 'Remove style' : 'Choose a lyric style...'}</option>
+                            <optgroup label="Hip-Hop Lyric Styles - 30 Pack">{#each LYRIC_PACK_STYLES as style}<option value={style.id} disabled={lyricMix.includes(style.id) && style.id !== id}>{style.name}</option>{/each}</optgroup>
+                            <optgroup label="Previous lyric engines">{#each LEGACY_LYRIC_CHOICES as [key, label]}<option value={key} disabled={lyricMix.includes(key) && key !== id}>{label}</option>{/each}</optgroup>
+                        </select>
+                        {#if id}
+                            <div class="lyric-influence"><InfluenceRing {name} value={lyricMixWeight[id] ?? 50} color={['#f3a2cf','#b8a4ef','#80d5d9'][index]} onchange={value => lyricMixWeight = {...lyricMixWeight, [id]: value}} /></div>
+                            <p class="lyric-slot-description">{profile?.description || 'Adds its writing, rhythm and rhyme rules to your lyric blend.'}</p>
+                        {:else}
+                            <div class="lyric-slot-empty"><span>+</span><p>{index === 0 ? 'Choose your main writing style.' : 'Layer in another rhythm, rhyme or storytelling style.'}</p></div>
+                        {/if}
+                    </div>
+                {/each}
+            </div>
+            <p class="lyric-blend-help">Influence is relative across active styles. Zero mutes a style. The first active style leads when writing rules conflict.</p>
+            <details class="lyric-saved-blends"><summary>Save or load a lyric mix</summary><BlendFavourites kind="lyric" current={{ ids: lyricMix, weights: lyricMixWeight }} onload={data => { const mix = cleanMix(data.ids, data.weights, lyricPresets.map(([id]) => id), 3); lyricMix = mix.ids; lyricMixWeight = mix.weights; }} /></details>
+            <small>This mix guides new drafts in the lyric assistant. Your existing lyrics stay unchanged.</small>
+        </div>
 		<label class="field">
 			<span class="field-name">Lyrics</span>
 			<textarea
@@ -717,21 +735,6 @@
 				<button type="button" onclick={() => { app.request.lyrics = lyricDraft; lyricDraft = ''; }}>Use these lyrics</button>
 				<button type="button" onclick={() => { lyricDraft = ''; }}>Discard draft</button>
 			{/if}
-			<div class="library-head"><span>Lyric style · construction engine</span><span>separate from music style</span></div>
-			<div class="style-row"><select aria-label="Lyric engine" bind:value={lyricPreset}><option value="">Choose secondary style…</option>{#each lyricPresets as p}<option value={p[0]}>{p[1]}</option>{/each}</select><button type="button" class="tool-btn" disabled={!lyricPreset || lyricMix.includes(lyricPreset) || lyricMix.length >= 3} onclick={() => { if (lyricPreset && !lyricMix.includes(lyricPreset) && lyricMix.length < 3) { lyricMix = [...lyricMix, lyricPreset]; lyricMixWeight = {...lyricMixWeight, [lyricPreset]: 50}; } }}>Add to blend</button></div>
-			<div class="style-mixer"><div class="ring-stage">
-				{#each lyricMix as id, i}
-					<div class="style-ring-wrap">
-						<InfluenceRing name={lyricPresets.find(([key]) => key === id)?.[1] || id} value={lyricMixWeight[id] ?? 50} color={['#fb923c','#f472b6','#22d3ee','#a78bfa','#34d399'][i % 5]} onchange={(value) => { lyricMixWeight = {...lyricMixWeight, [id]: value};  }} />
-						<span>{lyricPresets.find(([key]) => key === id)?.[1] || id}</span>
-						<button type="button" onclick={() => { lyricMix = lyricMix.filter(x => x !== id);  }}>Remove</button>
-					</div>
-				{/each}
-			</div><p class="mixer-help">Drag around a ring or use arrow keys. Influence is relative to other active styles, not an exact audio percentage. Zero excludes a style.</p></div>
-			<BlendFavourites kind="lyric" current={{ ids: lyricMix, weights: lyricMixWeight }} onload={(data) => {
-				const mix = cleanMix(data.ids, data.weights, lyricPresets.map(([id]) => id), 3);
-				lyricMix = mix.ids; lyricMixWeight = mix.weights;
-			}} />
 			<textarea rows="2" placeholder="What should the song be about? Add story, emotion, characters or a central idea…" bind:value={lyricTopic}></textarea>
 			<button type="button" class="generate-lyrics" disabled={!lyricTopic.trim() || lyricBusy || busy || !lyricModel} onclick={generateLyrics}>{lyricBusy ? 'Writing lyrics…' : 'Generate Lyrics with Ollama'}</button>
 		</div>
@@ -757,10 +760,10 @@
 		<div class="duration-auto" role="group" aria-labelledby="duration-auto-label">
 			<div class="duration-copy">
 				<span id="duration-auto-label" class="field-name"><span class="field-name-emoji">🤖</span> Auto duration</span>
-				<span class="duration-help">Estimate from lyrics. Turn off to enter a target length or use the server default.</span>
+				<span class="duration-help">Follow the lyrics and arrangement through a natural ending (up to 10 minutes, within model limits).</span>
 			</div>
-			<label class="duration-toggle" title="Estimate duration automatically from lyrics">
-				<input type="checkbox" checked={durationAuto} onchange={(event) => { app.request.duration = event.currentTarget.checked ? 0 : undefined; }} id="duration-auto" aria-label="Estimate duration automatically from lyrics" />
+			<label class="duration-toggle" title="Let the song finish naturally from the lyrics and arrangement">
+				<input type="checkbox" checked={durationAuto} onchange={(event) => { app.request.duration = event.currentTarget.checked ? 0 : undefined; }} id="duration-auto" aria-label="Let the song finish naturally from the lyrics and arrangement" />
 				<span class="duration-switch-track" aria-hidden="true"></span>
 			</label>
 		</div>
@@ -1342,15 +1345,12 @@
 			transform: rotate(360deg);
 		}
 	}
-.library-head { display:flex; justify-content:space-between; color:var(--muted); font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; margin-bottom:.4rem; }
-.style-row { display:flex; gap:.45rem; align-items:center; }
 .lyric-ai { margin-top:.65rem; padding:.65rem; border:1px solid rgba(45,212,191,.35); border-radius:.6rem; background:rgba(45,212,191,.05); }
 .lyric-ai textarea { width:100%; margin-top:.45rem; }
 .assistant-setting { display:flex; flex-direction:column; gap:.4rem; margin:1rem 0; } .assistant-setting label { display:flex; align-items:center; gap:.6rem; font-weight:600; } .assistant-setting input { width:auto; } .assistant-setting small { color:var(--fg-muted); }
 .generate-lyrics { width:100%; margin-top:.45rem; padding:.5rem; border:1px solid var(--border-strong); border-radius:.45rem; color:var(--fg); background:var(--bg-btn); font-size:.75rem; }
 .generate-lyrics:hover:not(:disabled) { background:var(--bg-btn-hover); }
 .generate-lyrics:disabled { opacity:.45; cursor:not-allowed; }
-.style-mixer { margin-top:.55rem; padding:.55rem; border:1px solid var(--border); border-radius:.6rem; background:rgba(0,0,0,.12); }
 .music-mixer { margin-top:.55rem; padding:.65rem; border:1px solid rgba(45,212,163,.3); border-radius:.6rem; background:rgba(45,212,163,.045); }
 .ring-stage { display:flex; flex-wrap:wrap; justify-content:center; gap:1rem; }
 .style-ring-wrap { display:flex; flex-direction:column; align-items:center; gap:.28rem; width:8.4rem; text-align:center; color:var(--fg-dim); font-size:.66rem; }
@@ -1371,4 +1371,9 @@
 .duration-toggle input:focus-visible + .duration-switch-track { outline:2px solid var(--focus); outline-offset:3px; }
 .meta-grid input:disabled { opacity:.68; cursor:not-allowed; }
 @media (max-width: 520px) { .duration-auto { align-items:flex-start; } .duration-help { max-width:28ch; } }
+
+.lyric-blend{color:var(--fg)}
+.lyric-blend-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.lyric-blend-heading strong{font-size:.9rem}.lyric-blend-heading p{color:var(--fg-dim);margin:4px 0 0!important;font-size:.73rem!important}.lyric-slot-count{white-space:nowrap;border:1px solid var(--border);border-radius:20px;padding:5px 10px;font-size:.68rem;color:var(--fg-dim)}
+.lyric-blend-slots{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.lyric-blend-slot{min-width:0;display:flex;flex-direction:column;padding:13px;border:1px solid color-mix(in srgb,var(--slot-color) 35%,var(--border));border-radius:12px;background:color-mix(in srgb,var(--slot-color) 5%,var(--bg-card));box-shadow:inset 0 2px var(--slot-color)}.lyric-blend-slot.empty{border-style:dashed;box-shadow:none;background:transparent}.lyric-slot-head{display:flex;gap:7px;align-items:center;min-height:25px;margin-bottom:10px;font-size:.64rem;color:var(--fg-dim)}.lyric-slot-number{color:color-mix(in srgb,var(--slot-color) 55%,var(--fg));font-weight:700;letter-spacing:.05em}.lyric-remove{margin-left:auto;border:0;background:transparent;color:var(--fg-dim);cursor:pointer;padding:4px;border-radius:4px}.lyric-remove:hover{color:var(--fg);background:var(--bg-btn)}.lyric-blend-slot select{width:100%;min-width:0;font-size:.73rem;padding:10px 8px;border-radius:8px}.lyric-influence{display:flex;flex-direction:column;align-items:center;padding:10px 0 2px}.lyric-slot-description{font-size:.7rem!important;color:var(--fg-dim);line-height:1.55!important;margin:10px 0 0!important}.lyric-slot-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:170px;padding:16px;text-align:center;color:var(--fg-dim)}.lyric-slot-empty>span{font-size:26px;font-weight:300;color:var(--slot-color);border:1px dashed var(--border);border-radius:50%;width:46px;height:46px;display:grid;place-items:center}.lyric-slot-empty p{font-size:.72rem!important;max-width:23ch}.lyric-blend-help{font-size:.67rem!important;color:var(--fg-dim);margin:12px 0!important}.lyric-saved-blends{border-top:1px solid var(--border);padding:10px 0;margin-bottom:6px}.lyric-saved-blends>summary{cursor:pointer;color:var(--fg-dim);font-size:.72rem}.lyric-blend :is(select,button):focus-visible{outline:2px solid var(--slot-color,var(--accent));outline-offset:2px}
+@media(max-width:680px){.lyric-blend-slots{grid-template-columns:1fr}.lyric-slot-empty{min-height:85px;padding:10px}.lyric-influence{padding:4px 0}.lyric-slot-description{margin-top:4px!important}}
 </style>

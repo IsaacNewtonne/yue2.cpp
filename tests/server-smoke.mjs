@@ -30,6 +30,10 @@ try {
   const props = await (await fetch(`${base}/props`)).json();
   assert.equal(props.defaults.mp3_bitrate, 320);
   assert.equal(props.sample_rate, 48000);
+  if (process.argv[2]) {
+    assert.equal(props.defaults.semantic_sampling.max_tokens, 15000);
+    assert.equal(props.defaults.abc_sampling.max_tokens, 8192);
+  }
   for (const request of [{ steps: 201 }, { duration: 601 }, { duration: -2 }, { cfg_scale: 31 }, { peak_clip: 1000 }, { output_format: 'mp3', mp3_bitrate: 321 }]) {
     const response = await fetch(`${base}/synth`, { method: 'POST', body: JSON.stringify(request) });
     assert.equal(response.status, 400, JSON.stringify(request));

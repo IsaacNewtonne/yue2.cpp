@@ -1,4 +1,8 @@
 # test-vae: Oobleck VAE decoder parity harness against the torch reference.
+add_executable(test-song-ending test-song-ending.cpp ${CMAKE_SOURCE_DIR}/src/request.cpp)
+target_include_directories(test-song-ending PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test-song-ending PRIVATE yyjson)
+
 add_executable(test-vae test-vae.cpp)
 link_ggml_backends(test-vae)
 

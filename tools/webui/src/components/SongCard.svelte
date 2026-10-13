@@ -393,6 +393,9 @@
 				{/each}
 			</div>
 		{/if}
+		{#if song.request.generation_warning}
+			<p role="status"><TriangleAlert size={14} /> {song.request.generation_warning}</p>
+		{/if}
 		<div class="wave-wrap">
 		<Waveform {song} audio={activeAudio} bind:playing bind:time bind:dur />
 		</div>

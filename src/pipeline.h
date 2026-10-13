@@ -20,6 +20,7 @@
 #include "model-store.h"
 #include "nar.h"
 #include "request.h"
+#include "song-ending.h"
 #include "timer.h"
 #include "torch-cpu-rng.h"
 #include "vae.h"
@@ -282,7 +283,12 @@ static bool pipeline_generate(Yue2Pipeline *          p,
         if(p->progress) p->progress("Composing score",0,0);
         std::vector<int>            open = yue2_build_prompt_ids(encode, cot, r.style, r.lyrics, nullptr);
         std::vector<Yue2Generation> plans;
-        if (!yue2_generate(lm, &p->kv, std::vector<std::vector<int>>(B, open), {}, 1.0f, r.abc_sampling, r.lm_seed,
+        Yue2Sampling score_sampling = r.abc_sampling;
+        // Leave room for the score terminator and a usable performance prefix.
+        score_sampling.max_tokens = std::min(score_sampling.max_tokens, p->kv.cfg.max_seq_len - (int) open.size() - 4);
+        if (score_sampling.max_tokens < 1) return false;
+        score_sampling.min_tokens = std::min(score_sampling.min_tokens, score_sampling.max_tokens - 1);
+        if (!yue2_generate(lm, &p->kv, std::vector<std::vector<int>>(B, open), {}, 1.0f, score_sampling, r.lm_seed,
                            YUE2_PHASE_ABC, &plans, cancelled, cancel_data,
                            [p](int done,int total){if(p->progress)p->progress("Composing score",done,total);})) {
             return false;
@@ -323,27 +329,21 @@ static bool pipeline_generate(Yue2Pipeline *          p,
         fprintf(stderr, "[Pipeline] Replay: %zu frames supplied\n", codes[0].tokens.size());
     } else {
         if(p->progress) p->progress("Composing performance",0,0);
-        float duration = r.duration;
-        if (duration <= 0.0f) {
-            duration = yue2_estimate_duration_from_lyrics(r.lyrics);
-            if (duration > 0.0f) {
-                fprintf(stderr, "[Pipeline] Auto duration from lyrics: %.1f s\n", (double) duration);
-            } else {
-                duration = 360.0f;
-                fprintf(stderr, "[Pipeline] No lyrics, using default duration: %.1f s\n", (double) duration);
-            }
-        }
-        // The requested length caps the budget of the stage, never raises it
+        // A word-count estimate is not an audio boundary. Auto must retain the
+        // model's natural EOS, with only explicit and resource safety ceilings.
         Yue2Sampling semantic = r.semantic_sampling;
-        int          budget   = (int) (duration * (float) YUE2_FRAME_RATE);
-        if (budget > 0 && budget < semantic.max_tokens) {
-            fprintf(stderr, "[AR] Frame budget clamped to %d by the %s duration (%.1f s)\n", budget,
-                    r.duration <= 0.0f ? "auto" : "requested", (double) duration);
-            semantic.max_tokens = budget;
-            if (semantic.min_tokens > semantic.max_tokens) {
-                semantic.min_tokens = semantic.max_tokens;
-            }
+        int longest = 0;
+        for (const auto & prefix : prefixes) longest = std::max(longest, (int) prefix.size());
+        for (const auto & negative : negatives) longest = std::max(longest, (int) negative.size());
+        semantic.max_tokens = song_frame_budget(r.duration, semantic.max_tokens, p->kv.cfg.max_seq_len, longest);
+        if (semantic.max_tokens < 1) {
+            fprintf(stderr, "[Pipeline] FATAL: no context remains for the performance\n");
+            return false;
         }
+        semantic.min_tokens = std::min(semantic.min_tokens, semantic.max_tokens - 1);
+        fprintf(stderr, "[Pipeline] %s: natural end token enabled; ceiling %d frames (%.1f s)\n",
+                r.duration <= 0.0f ? "Auto duration" : "Duration limit", semantic.max_tokens,
+                (double) semantic.max_tokens / YUE2_FRAME_RATE);
         if (!yue2_generate(lm, &p->kv, prefixes, negatives, guidance, semantic, r.lm_seed, YUE2_PHASE_SEMANTIC, &codes,
                            cancelled, cancel_data, [p](int done,int total){if(p->progress)p->progress("Composing performance",done,total);})) {
             return false;

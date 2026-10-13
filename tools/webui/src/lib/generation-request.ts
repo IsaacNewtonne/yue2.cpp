@@ -6,6 +6,7 @@ export function prepareGeneration(request: Yue2Request, fresh: boolean): Yue2Req
 		// Cached scores bypass composition; cached codes bypass performance generation.
 		delete next.abc;
 		delete next.semantic_tokens;
+		delete next.generation_warning;
 	}
 	for (const key of ['lm_seed', 'seed'] as const) {
 		const seed = next[key];
