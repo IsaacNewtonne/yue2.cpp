@@ -6,8 +6,11 @@
  import {trackFromLyrics} from '../lib/album-plan.js';
  import {runAlbum} from '../lib/album-runner.js';
  import {withStudioLock} from '../lib/coordination.js';
- import {applyProducer} from '../lib/producer.js';
+ import {modelRequest, readPromptMode} from '../lib/prompt-clean.ts';
  import {buildSparse} from '../lib/fields.js';
+ // The album keeps the Create page's sound and voice plan in the prompt mode
+ // chosen there (clean tag line by default, legacy for A/B comparison).
+ function albumBase(){const request=buildSparse($state.snapshot(app.request));const producer=$state.snapshot(app.producer);return modelRequest(request,{mode:readPromptMode(),planning:producer.enabled,producer,rawStyle:request.style});}
  import {getAllSongs,updateSong} from '../lib/db.js';
  import {createZip,exportLibrary} from '../lib/backup.js';
  import SongList from './SongList.svelte';
@@ -26,7 +29,7 @@
  async function operation(work:()=>Promise<void>){if(busy)return;working=true;try{const result=await withStudioLock(work);if(!result.acquired)toast('Another Studio operation is running. Please try again when it finishes.');await refresh();return result.acquired;}catch(e){toast(String(e));return false;}finally{working=false;}}
  async function change(update:(a:Album)=>void){const id=selectedId;return await operation(async()=>{const a=(await listAlbums()).find(a=>a.id===id);if(!a)throw new Error('Album is unavailable.');update(a);await saveAlbum(a);});}
  async function create(){await operation(async()=>{const name=title.trim();if(!name)throw new Error('Give your album a name.');if((await listAlbums()).some(a=>a.title.toLowerCase()===name.toLowerCase()))throw new Error('That album name already exists.');
- const a:Album={id:crypto.randomUUID(),version:1,title:name,created:Date.now(),updated:Date.now(),request:applyProducer(buildSparse($state.snapshot(app.request)),$state.snapshot(app.producer)),visualStyle:'Cinematic urban illustration, warm neon, rich texture',artwork:true,video:true,seed:crypto.getRandomValues(new Uint32Array(1))[0]%2147483647,tracks:[],status:'draft',stage:'Ready to arrange'};
+ const a:Album={id:crypto.randomUUID(),version:1,title:name,created:Date.now(),updated:Date.now(),request:albumBase(),visualStyle:'Cinematic urban illustration, warm neon, rich texture',artwork:true,video:true,seed:crypto.getRandomValues(new Uint32Array(1))[0]%2147483647,tracks:[],status:'draft',stage:'Ready to arrange'};
  await saveAlbum(a);selectedId=a.id;title='';});}
  async function addSong(id:number){await operation(async()=>{await sendSongToAlbum(id,selectedId,'');});}
  async function addLyrics(){const name=lyricTitle.trim(),text=lyrics.trim();if(!name||!text){toast('Enter a track title and lyrics.');return;}
@@ -77,7 +80,7 @@
  {:else if step===3}
  <p>Set the running order and sound direction for new tracks. Removing a track here keeps its saved song in Library.</p>
  <label>Sound and voice direction<textarea rows="6" value={album.request.style} disabled={busy} onchange={e=>{const v=textValue(e);void change(a=>{a.request.style=v;});}}></textarea></label>
- <button disabled={busy} onclick={()=>change(a=>{a.request=applyProducer(buildSparse($state.snapshot(app.request)),$state.snapshot(app.producer));})}>Use current Create sound &amp; voice plan</button>
+ <button disabled={busy} onclick={()=>change(a=>{a.request=albumBase();})}>Use current Create sound &amp; voice plan</button>
  <ol class="track-order">{#each album.tracks as track,i (track.id)}<li><div class="track-row"><div><strong>{i+1}. {track.title}</strong><small>{track.linked?'From Library':track.songId?'Audio saved':'Generate from lyrics'}</small></div><div class="actions"><button aria-label={'Move '+track.title+' up'} disabled={busy||i===0} onclick={()=>move(track.id,-1)}>↑</button><button aria-label={'Move '+track.title+' down'} disabled={busy||i===album!.tracks.length-1} onclick={()=>move(track.id,1)}>↓</button><button disabled={busy} onclick={()=>change(a=>{a.tracks=a.tracks.filter(t=>t.id!==track.id);})}>Remove</button></div></div></li>{:else}<p>Add saved songs or lyrics to build the running order.</p>{/each}</ol>
  {:else}
  <p>{album.tracks.filter(t=>t.linked).length} saved songs · {album.tracks.filter(t=>!t.linked&&!t.songId).length} new tracks to generate. New audio is saved as MP3.</p>
@@ -100,7 +103,7 @@
  .album-heading,.panel{padding:1.4rem;border:1px solid var(--border-strong);border-radius:22px;background:var(--bg-card);box-shadow:var(--shadow)}
  .album-heading,.section-heading,.track-row,footer{display:flex;align-items:center;justify-content:space-between;gap:1rem}
  .album-heading{background:linear-gradient(120deg,color-mix(in srgb,var(--accent) 12%,var(--bg-card)),var(--bg-card))}
- h1,h2,strong,label{color:var(--fg)}h1{font-size:1.9rem}h2{font-size:1.2rem}.eyebrow{font-size:.7rem;letter-spacing:.15em;margin-bottom:.5rem}
+ h1,h2,strong,label{color:var(--fg)}h1{font-size:1.9rem}h2{font-size:1.2rem}.eyebrow{font-size:.75rem;letter-spacing:.15em;margin-bottom:.5rem}
  p,small,footer>span,.album-tile>span{color:var(--fg-dim);line-height:1.6}p{margin:.35rem 0}.panel{display:grid;gap:1rem}
  label{display:grid;gap:.45rem;font-weight:600;font-size:.9rem}
  input,textarea,button{font:inherit;color:var(--fg);background:var(--bg-input);border:1px solid var(--border-strong);border-radius:12px;padding:.75rem}

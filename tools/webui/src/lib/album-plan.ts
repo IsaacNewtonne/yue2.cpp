@@ -1,6 +1,7 @@
 import type { Album, AlbumTrack } from './album-types.js';
 import type { Yue2Request } from './types.js';
 import { coverPrompt } from './cover-prompt.js';
+import { cleanLyrics, readPromptMode } from './prompt-clean.ts';
 
 export function trackFromLyrics(filename: string, lyrics: string): AlbumTrack {
 	if (!/\.(txt|md)$/i.test(filename)) throw new Error('Use UTF-8 .txt or .md lyric files.');
@@ -9,7 +10,12 @@ export function trackFromLyrics(filename: string, lyrics: string): AlbumTrack {
 }
 export function albumRequest(base: Yue2Request, track: AlbumTrack, seed: number): Yue2Request {
 	// A previous song's score/codes must never override this track's lyrics.
-	return { ...structuredClone(base), lyrics: track.lyrics, abc: '', semantic_tokens: '',
+	// The Create page's estimate belongs to its own lyrics; the server
+	// estimates this track's length from the track lyrics.
+	const request: Yue2Request = { ...structuredClone(base) };
+	delete request.duration_estimate;
+	const lyrics = readPromptMode() === 'clean' ? cleanLyrics(track.lyrics) : track.lyrics;
+	return { ...request, lyrics, abc: '', semantic_tokens: '',
 		lm_batch_size: 1, synth_batch_size: 1, lm_seed: seed, seed,
 		output_format: 'mp3', mp3_bitrate: 320 };
 }

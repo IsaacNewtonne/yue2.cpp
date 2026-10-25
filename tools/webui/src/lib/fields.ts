@@ -26,10 +26,13 @@ export const FIELDS: readonly FieldDef[] = [
 	// lm: what the autoregressive half is asked to write
 	{ key: 'cot', section: 'lm', type: 'str' },
 	{ key: 'duration', section: 'lm', type: 'num' },
+	{ key: 'duration_estimate', section: 'lm', type: 'num' },
 	{ key: 'lm_batch_size', section: 'lm', type: 'num' },
 	{ key: 'lm_seed', section: 'lm', type: 'num' },
 
 	// semantic: the token stage, its guidance, its sampling and its codes
+	{ key: 'score_retries', section: 'score', type: 'num' },
+
 	{ key: 'cfg_scale', section: 'semantic', type: 'num' },
 	{ key: 'semantic_tokens', section: 'semantic', type: 'str' },
 
@@ -39,7 +42,8 @@ export const FIELDS: readonly FieldDef[] = [
 	{ key: 'seed', section: 'post', type: 'num' },
 	{ key: 'peak_clip', section: 'post', type: 'num' },
 	{ key: 'mp3_bitrate', section: 'post', type: 'num' },
-	{ key: 'mastering_profile', section: 'post', type: 'str' }
+	{ key: 'mastering_profile', section: 'post', type: 'str' },
+	{ key: 'vocal_polish', section: 'post', type: 'str' }
 ];
 
 // the seven knobs of a sampling preset, same order as the protocol
@@ -119,6 +123,8 @@ export function buildSparse(r: Yue2Request): Yue2Request {
 			delete (out as unknown as Rec)[s.key];
 		}
 	}
+	// the chorus lock is on by default on the server; only "off" travels
+	if (r.chorus_lock === false) out.chorus_lock = false;
 	return out;
 }
 

@@ -31,6 +31,14 @@ export interface Yue2Request {
 	peak_clip?: number;
 	mp3_bitrate?: number;
 	mastering_profile?: string;
+	// lyric-fit estimate in seconds: auto duration stops near 1.2x it + 15 s
+	duration_estimate?: number;
+	// score re-draws when the score has no sung melody or misses choruses
+	score_retries?: number;
+	// copy the first chorus melody into later choruses (server default on)
+	chorus_lock?: boolean;
+	// vocal clarity chain: off, mix (EQ, de-ess, compression) or stems
+	vocal_polish?: string;
 	generation_warning?: string;
 }
 
