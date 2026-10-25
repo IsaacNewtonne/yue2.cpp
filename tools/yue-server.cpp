@@ -685,8 +685,7 @@ static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
     for (size_t t = 0; t < songs.size(); t++) {
         Yue2Song & song = songs[t];
         song_declick_end(song.audio.data(), song.T_audio, YUE2_SAMPLE_RATE);
-        const std::string ending_warning = song.truncated ?
-            "Generation reached a composition or length limit before its natural ending. This take may be incomplete; use Auto duration and a fresh composition, or shorten the lyrics." : "";
+        const std::string & ending_warning = song.ending_warning;
         if (request.mastering_profile != "off") {
             std::vector<float> mastered;
             std::string error;

@@ -74,6 +74,7 @@ struct Yue2Song {
     int                T_audio;    // samples per channel
     int                T_lat;      // semantic frames
     bool               truncated;  // a stage hit its budget before its end token
+    std::string        ending_warning;
 };
 
 // Parses the CSV interchange of a semantic stream
@@ -316,6 +317,7 @@ static bool pipeline_generate(Yue2Pipeline *          p,
     }
 
     std::vector<Yue2Generation> codes(B);
+    std::string performance_limit;
     if (replay) {
         std::vector<int> values;
         if (!pipeline_parse_tokens(r.semantic_tokens, &values)) {
@@ -335,6 +337,7 @@ static bool pipeline_generate(Yue2Pipeline *          p,
         int longest = 0;
         for (const auto & prefix : prefixes) longest = std::max(longest, (int) prefix.size());
         for (const auto & negative : negatives) longest = std::max(longest, (int) negative.size());
+        performance_limit = song_limit_reason(r.duration, semantic.max_tokens, p->kv.cfg.max_seq_len, longest);
         semantic.max_tokens = song_frame_budget(r.duration, semantic.max_tokens, p->kv.cfg.max_seq_len, longest);
         if (semantic.max_tokens < 1) {
             fprintf(stderr, "[Pipeline] FATAL: no context remains for the performance\n");
@@ -376,6 +379,7 @@ static bool pipeline_generate(Yue2Pipeline *          p,
             song.score      = scores[i];
             song.T_lat      = T_lat;
             song.truncated  = truncated[i] || codes[i].truncated;
+            song.ending_warning = song_ending_warning(truncated[i], codes[i].truncated, performance_limit, r.duration <= 0.0f);
             song.tokens.reserve(codes[i].tokens.size());
             for (size_t k = 0; k < codes[i].tokens.size(); k++) {
                 song.tokens.push_back(codes[i].tokens[k] - YUE2_CODEC_OFFSET);

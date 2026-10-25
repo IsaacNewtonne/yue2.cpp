@@ -10,6 +10,14 @@ static void check(bool ok, const char * message) {
 
 int main() {
     Yue2Request r;
+    check(song_limit_reason(0, 15000, 24576, 7000) == "Auto duration's 10-minute limit", "auto ceiling diagnosis");
+    check(song_limit_reason(30, 15000, 24576, 7000) == "the selected duration limit", "manual ceiling diagnosis");
+    check(song_limit_reason(0, 2000, 24576, 7000) == "the performance token limit", "token ceiling diagnosis");
+    check(song_limit_reason(0, 15000, 24576, 12000) == "the model context limit", "context ceiling diagnosis");
+    check(song_ending_warning(false, false, "", true).empty(), "complete take has no warning");
+    const auto warning = song_ending_warning(true, true, "the model context limit", true);
+    check(warning.find("Composition") != std::string::npos && warning.find("Performance") != std::string::npos, "both truncated stages reported");
+    check(warning.find("Auto duration was enabled") != std::string::npos && warning.find("Try Auto duration") == std::string::npos, "auto warning honors setting");
     request_init(&r);
     check(r.semantic_sampling.max_tokens == 15000, "default permits ten minutes");
     check(r.abc_sampling.max_tokens == 8192, "score has room to finish");

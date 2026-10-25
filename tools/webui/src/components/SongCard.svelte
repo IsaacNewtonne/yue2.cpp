@@ -18,6 +18,7 @@
 	import { withStudioLock } from '../lib/coordination.js';
 	import { app, setRequest, startRemix, toast } from '../lib/state.svelte.js';
 	import { canRemix } from '../lib/remix.js';
+	import { endingWarning } from '../lib/ending-warning.js';
 	import { transcribeSubmit, pollJob, jobResultTranscribe, balanceVocalLevel, renderVideo } from '../lib/api.js';
 	import { deleteSong, deleteSongs, updateSong } from '../lib/db.js';
 	import type { Song } from '../lib/types.js';
@@ -394,7 +395,7 @@
 			</div>
 		{/if}
 		{#if song.request.generation_warning}
-			<p role="status"><TriangleAlert size={14} /> {song.request.generation_warning}</p>
+			<p role="status"><TriangleAlert size={14} /> {endingWarning(song.request.generation_warning)}</p>
 		{/if}
 		<div class="wave-wrap">
 		<Waveform {song} audio={activeAudio} {playing} {time} bind:dur />
