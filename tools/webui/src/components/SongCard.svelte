@@ -498,7 +498,7 @@
 			0 0 28px rgba(139, 92, 246, 0.18);
 	}
 	.master-ab { display:flex; gap:.25rem; width:max-content; padding:.2rem; border:1px solid var(--border); border-radius:999px; background:var(--bg-input); }
-	.master-ab button { border:0; border-radius:999px; padding:.25rem .65rem; color:var(--fg-dim); background:transparent; font-size:.68rem; cursor:pointer; }
+	.master-ab button { border:0; border-radius:999px; padding:.25rem .65rem; color:var(--fg-dim); background:transparent; font-size:.75rem; cursor:pointer; }
 	.master-ab button.active { color:var(--fg); background:var(--bg-btn-hover); box-shadow:inset 0 0 0 1px var(--border-strong); }
 	.art-prompt { display:grid; gap:.4rem; }
 	.art-prompt textarea { width:100%; box-sizing:border-box; resize:vertical; background:var(--bg-input); border:1px solid var(--border); border-radius:8px; padding:.55rem .65rem; color:var(--fg); font-size:.83rem; font-family:inherit; }
@@ -608,7 +608,7 @@
 		min-width: 0;
 	}
 	.format-badge {
-		font-size: 0.62rem;
+		font-size: .75rem;
 		font-weight: 700;
 		letter-spacing: 0.08em;
 		font-family: ui-monospace, monospace;
@@ -619,7 +619,7 @@
 		flex-shrink: 0;
 	}
 	.style-tag {
-		font-size: 0.7rem;
+		font-size: .75rem;
 		color: var(--fg-faint);
 		white-space: nowrap;
 		overflow: hidden;
@@ -636,7 +636,7 @@
 		overflow: hidden;
 	}
 	.style-chip {
-		font-size: 0.65rem;
+		font-size: .75rem;
 		font-weight: 600;
 		color: var(--accent);
 		border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
@@ -657,7 +657,7 @@
 	}
 	.timecode {
 		margin-left: auto;
-		font-size: 0.72rem;
+		font-size: .75rem;
 		font-family: ui-monospace, monospace;
 		font-variant-numeric: tabular-nums;
 		color: var(--fg-dim);

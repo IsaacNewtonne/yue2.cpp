@@ -6,6 +6,8 @@
 	import './theme-readability.css';
 	import './interactions.css';
 	import './theme-identities.css';
+	import './color-system.css';
+	import './ui-upgrade.css';
 	import { app, retrySettingsStorage, toast } from './lib/state.svelte.js';
 	import { props } from './lib/api.js';
 	import { getAllSongs } from './lib/db.js';
@@ -266,7 +268,7 @@
 		letter-spacing: 0.01em;
 	}
 	.brand-version {
-		font-size: 0.68rem;
+		font-size: .75rem;
 		font-family: ui-monospace, monospace;
 		color: var(--fg-faint);
 		border: 1px solid var(--border);
@@ -277,7 +279,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.45rem;
-		font-size: 0.72rem;
+		font-size: .75rem;
 		font-family: ui-monospace, monospace;
 		color: var(--fg-dim);
 		background: var(--bg-card);

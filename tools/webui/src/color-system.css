@@ -1,0 +1,66 @@
+/* color-system.css: colour that carries meaning.
+   Sections, voices, lyric fit and pipeline stages each have one fixed hue
+   family, the same in every theme. Text tints mix the hue toward the theme's
+   foreground so labels keep their contrast on light and dark surfaces. */
+:root {
+	--sec-verse: #3b82f6;      /* blue: verses tell the story */
+	--sec-chorus: #eab308;     /* gold: the hook, the part that returns */
+	--sec-prechorus: #f97316;  /* orange: the lift into the hook */
+	--sec-bridge: #8b5cf6;     /* violet: the contrast section */
+	--sec-intro: #64748b;      /* slate: bookends */
+	--sec-outro: #64748b;
+	--sec-inst: #14b8a6;       /* teal: no words */
+	--voice-1: #06b6d4;
+	--voice-2: #ec4899;
+	--voice-3: #84cc16;
+	--voice-4: #6366f1;
+	--fit-good: #16a34a;
+	--fit-warn: #d97706;
+	--fit-bad: #dc2626;
+	--stage-idle: #64748b;
+	--stage-prepare: #64748b;
+	--stage-compose: #a855f7;
+	--stage-render: #0ea5e9;
+	--stage-decode: #14b8a6;
+	--stage-encode: #22c55e;
+	--stage-art: #ec4899;
+	--stage-done: #16a34a;
+	--stage-error: #dc2626;
+}
+
+/* a chip tinted by --hue: used for sections, voices, fit and stages */
+.hue-chip {
+	--hue: var(--sec-intro);
+	display: inline-flex; align-items: center; gap: 6px;
+	min-height: 28px; padding: 3px 10px; border-radius: 999px;
+	font-size: 12px; font-weight: 600; line-height: 1.2;
+	color: color-mix(in srgb, var(--hue) 62%, var(--fg));
+	background: color-mix(in srgb, var(--hue) 14%, transparent);
+	border: 1px solid color-mix(in srgb, var(--hue) 50%, transparent);
+	white-space: nowrap;
+}
+.hue-chip::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--hue); flex: none; }
+.hue-chip.no-dot::before { display: none; }
+.sec-verse { --hue: var(--sec-verse); }
+.sec-chorus { --hue: var(--sec-chorus); }
+.sec-prechorus { --hue: var(--sec-prechorus); }
+.sec-bridge { --hue: var(--sec-bridge); }
+.sec-intro { --hue: var(--sec-intro); }
+.sec-outro { --hue: var(--sec-outro); }
+.sec-inst { --hue: var(--sec-inst); }
+.voice-1 { --hue: var(--voice-1); }
+.voice-2 { --hue: var(--voice-2); }
+.voice-3 { --hue: var(--voice-3); }
+.voice-4 { --hue: var(--voice-4); }
+.fit-good { --hue: var(--fit-good); }
+.fit-warn { --hue: var(--fit-warn); }
+.fit-bad { --hue: var(--fit-bad); }
+.stage-idle { --hue: var(--stage-idle); }
+.stage-prepare { --hue: var(--stage-prepare); }
+.stage-compose { --hue: var(--stage-compose); }
+.stage-render { --hue: var(--stage-render); }
+.stage-decode { --hue: var(--stage-decode); }
+.stage-encode { --hue: var(--stage-encode); }
+.stage-art { --hue: var(--stage-art); }
+.stage-done { --hue: var(--stage-done); }
+.stage-error { --hue: var(--stage-error); }

@@ -51,7 +51,7 @@ html:root[data-theme] .yue2-app .request-form .field-name {color:var(--fg);font-
 html:root[data-theme] .yue2-app .request-form .help-text,
 html:root[data-theme] .yue2-app .request-form .section-meta,
 html:root[data-theme] .yue2-app .request-form .mixer-help,
-html:root[data-theme] .yue2-app .request-form .field-name small {color:var(--fg-dim);font-size:11px;line-height:1.5;}
+html:root[data-theme] .yue2-app .request-form .field-name small {color:var(--fg-dim);font-size:12px;line-height:1.5;}
 html:root[data-theme] .yue2-app .request-form input:not([type='range']):not([type='checkbox']),
 html:root[data-theme] .yue2-app .request-form select,
 html:root[data-theme] .yue2-app .request-form textarea {background:var(--bg-input);border:1px solid var(--border-strong);color:var(--fg);font-size:12px;}
@@ -79,7 +79,7 @@ html:root[data-theme] .yue2-app .request-form > #semantic-sampling > summary {ba
 html:root[data-theme]:not([data-theme='studio']) .yue2-app .request-form .desk-nav {background:var(--bg-panel);border:1px solid var(--border);border-radius:12px;padding:8px;}
 html:root[data-theme]:not([data-theme='studio']) .yue2-app .request-form .desk-nav a {background:var(--bg-card);border:1px solid var(--border);border-radius:10px;}
 html:root[data-theme]:not([data-theme='studio']) .yue2-app .request-form .desk-nav .step-copy strong {color:var(--fg);font-size:12px;}
-html:root[data-theme]:not([data-theme='studio']) .yue2-app .request-form .desk-nav .step-copy small {color:var(--fg-dim);font-size:10px;}
+html:root[data-theme]:not([data-theme='studio']) .yue2-app .request-form .desk-nav .step-copy small {color:var(--fg-dim);font-size:12px;}
 html:root[data-theme]:not([data-theme='studio']) .yue2-app .request-form .desk-nav a > span:first-child {background:var(--bg-card-2);color:var(--accent);border-color:var(--border-strong);}
 html:root[data-theme]:not([data-theme='studio']) .yue2-app .request-form .action-bar {padding:10px;background:var(--bg-card-2);border:1px solid var(--border-strong);box-shadow:0 -5px 25px #0003;}
 html:root[data-theme]:not([data-theme='studio']) .yue2-app .request-form .action-bar .generate-btn,

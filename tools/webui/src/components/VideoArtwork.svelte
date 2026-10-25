@@ -50,6 +50,6 @@
 {/if}
 
 <style>
-	.cover-status { width:116px; aspect-ratio:1; display:grid; place-items:center; text-align:center; padding:8px; border:1px solid var(--border); border-radius:13px; color:var(--fg-dim); font-size:.7rem; }
+	.cover-status { width:116px; aspect-ratio:1; display:grid; place-items:center; text-align:center; padding:8px; border:1px solid var(--border); border-radius:13px; color:var(--fg-dim); font-size:.75rem; }
 	@media(max-width:600px) { .cover-status { width:80px; } }
 </style>

@@ -40,8 +40,19 @@
 	import ProducerControls from './ProducerControls.svelte';
 	import { activity, activityStage } from '../lib/activity.svelte.js';
 	import { applyProducer, cleanProducer, lyricGuidance } from '../lib/producer.js';
+	import { modelRequest } from '../lib/prompt-clean.ts';
+	import { lyricFit, clock } from '../lib/lyric-fit.ts';
+	import { quality, qualityFirstRun, withQuality } from '../lib/quality.svelte.ts';
+	import { structureWarnings } from '../lib/song-structure.ts';
+	import LyricSectionMap from './LyricSectionMap.svelte';
+	import LyricFitMeter from './LyricFitMeter.svelte';
+	import QualityControls from './QualityControls.svelte';
 
 	if (!app.request.mastering_profile) app.request.mastering_profile = 'off';
+	// The quality upgrade turns on streaming loudness once; switching it off sticks.
+	if (qualityFirstRun && app.request.mastering_profile === 'off') app.request.mastering_profile = 'streaming';
+	// Old default was a fixed 6:00 cap; switch once to Auto so songs end with the lyrics.
+	if (qualityFirstRun && (app.request.duration === undefined || app.request.duration === 360)) app.request.duration = 0;
 	let busy = $state(false);
 	let stopTakes = false;
 	let pipelineController: AbortController | undefined;
@@ -210,6 +221,11 @@
 
 	let d = $derived(app.props?.defaults);
 	let durationAuto = $derived(app.request.duration === 0);
+	// The song planner shapes the estimate only for fresh compositions.
+	const fitProducer = $derived(!app.remix && freshComposition && app.producer.enabled ? cleanProducer($state.snapshot(app.producer)) : null);
+	const fit = $derived(lyricFit(app.request.lyrics || '', fitProducer, durationAuto ? 0 : (app.request.duration ?? d?.duration ?? 360)));
+	const chorusWarning = $derived(structureWarnings(app.request.lyrics || '')[0] || '');
+	const styleChars = $derived(modelBase(!app.remix && freshComposition && app.producer.enabled, cleanProducer($state.snapshot(app.producer))).style.length);
 	onMount(() => {
 		try {
 			const saved = JSON.parse(localStorage.getItem('yue2-style-mix-v1') || 'null');
@@ -328,6 +344,8 @@
 		musicMix = []; musicMixWeight = {}; musicStylePreset = ''; mixedMusicPrompt = '';
 		lyricMix = ['syllable_dense']; lyricMixWeight = { syllable_dense: 100 }; lyricTopic = '';
 		setRequest(emptyRequest());
+		app.request.mastering_profile = 'streaming';
+		app.request.duration = 0;
 	}
 
 	function saveAs(format: 'json' | 'yaml') {
@@ -448,7 +466,17 @@
 		if (automatic) request = applyAutomaticSettings(request, profile);
 		if (!musicMix.length) request.style = freeformMusicPrompt(app.request.style, musicPromptStrength);
 		if (durationAuto) request.duration = 0;
+		// The lyric-fit estimate sets the auto-duration ceiling on the server.
+		if (durationAuto && fit.estimate > 0) request.duration_estimate = fit.estimate; else delete request.duration_estimate;
 		return request;
+	}
+
+	// What the model receives: the clean tag-line prompt, or the previous
+	// prose prompt in legacy mode. The editor text never changes.
+	function modelBase(planning: boolean, producer: ReturnType<typeof cleanProducer>): Yue2Request {
+		const request = buildRequest();
+		const rawStyle = musicMix.length ? request.style : musicPromptStrength === 0 ? '' : app.request.style;
+		return withQuality(modelRequest(request, { mode: quality.promptMode, planning, producer, rawStyle }));
 	}
 
 	// Example: pick a random official demo prompt, fill the form and name
@@ -477,8 +505,8 @@
 			const planning = !app.remix && freshComposition && app.producer.enabled;
 			const producer = cleanProducer($state.snapshot(app.producer));
 			const base = app.remix
-				? { ...remixRequest(app.remix.request, app.remix.amount, d), mastering_profile: app.request.mastering_profile }
-				: planning ? applyProducer(buildRequest(), producer) : buildRequest();
+				? withQuality({ ...remixRequest(app.remix.request, app.remix.amount, d), mastering_profile: app.request.mastering_profile })
+				: modelBase(planning, producer);
 			const count = planning ? producer.takes : 1;
 			const takeGroup = count > 1 ? crypto.randomUUID() : undefined;
 			const name = app.name || 'Untitled';
@@ -672,10 +700,9 @@
 	</section>
 	<ProducerControls disabled={busy || !!app.remix || !freshComposition} />
 	<details class="card words-card" id="lyrics-editor">
-		<summary class="card-head"><h3><span class="step-number">02</span> Lyrics &amp; writing</h3><span class="section-meta">{lyricMix.length} lyric {lyricMix.length === 1 ? "style" : "styles"} / {app.request.lyrics ? "Lyrics ready" : "Add lyrics or write with AI"}</span></summary><div class="lyrics-content"><div class="card-head">
-			<h3><span class="step-number">02</span> Lyrics &amp; writing</h3>
+		<summary class="card-head"><h3><span class="step-number">02</span> Lyrics &amp; writing</h3><span class="section-meta">{lyricMix.length} lyric {lyricMix.length === 1 ? "style" : "styles"} / {app.request.lyrics ? "Lyrics ready" : "Add lyrics or write with AI"}</span></summary><div class="lyrics-content"><div class="card-head lyrics-actions-row">
 			<div class="lyrics-heading-actions">
-				<span class="section-meta">{(app.request.lyrics || "").trim().split(/\s+/).filter(Boolean).length} words</span>
+				<span class={`hue-chip fit-${fit.level}`} title={fit.advice}>{fit.estimate ? `${fit.words} words · ≈ ${clock(fit.estimate)}` : 'No lyrics yet'}</span>
 				<button type="button" class="lyrics-load-btn" onclick={openLyricsFile} title="Load lyrics from a text file"><FolderOpen size={14} /><span>Load lyrics</span></button>
 				<input bind:this={lyricsFileInput} class="lyrics-file-input" type="file" accept=".txt,.md,.lrc,.srt,.vtt,text/plain" aria-label="Choose a lyrics text file" onchange={onLyricsFileSelected} />
 			</div>
@@ -715,6 +742,7 @@
 				bind:value={app.request.lyrics}
 			></textarea>
 		</label>
+		<LyricSectionMap lyrics={app.request.lyrics || ''} />
 		<div class="assistant-setting">
             <label><input type="checkbox" role="switch" aria-label="Lyric assistant" checked={lyricAssistantEnabled} disabled={lyricBusy} onchange={(event) => setLyricAssistant(event.currentTarget.checked)} /> Lyric assistant: {lyricAssistantEnabled ? 'On' : 'Off'}</label>
             <small>{lyricBusy ? 'Let the current lyric request finish, or cancel it below, before switching off.' : lyricAssistantEnabled ? 'Write a draft with Ollama when you choose Generate Lyrics.' : 'Use your own lyrics. The lyric assistant will not contact Ollama.'}</small>
@@ -757,15 +785,20 @@
 				<X size={15} />
 			</button>
 		</div>
-		<div class="duration-auto" role="group" aria-labelledby="duration-auto-label">
-			<div class="duration-copy">
-				<span id="duration-auto-label" class="field-name"><span class="field-name-emoji">🤖</span> Auto duration</span>
-				<span class="duration-help">Follow the lyrics and arrangement through a natural ending (up to 10 minutes, within model limits).</span>
+		<div class="song-length" role="group" aria-labelledby="song-length-label">
+			<div class="song-length-head">
+				<span id="song-length-label" class="field-name">Song length</span>
+				<div class="length-mode" role="radiogroup" aria-label="Song length mode">
+					<button type="button" role="radio" aria-checked={durationAuto} class:selected={durationAuto} onclick={() => { app.request.duration = 0; }}>Auto · fit lyrics</button>
+					<button type="button" role="radio" aria-checked={!durationAuto} class:selected={!durationAuto} onclick={() => { if (durationAuto) app.request.duration = fit.estimate ? Math.min(600, fit.ceiling) : undefined; }}>Set length</button>
+				</div>
+				{#if !durationAuto}
+					<label class="length-input">Seconds<input type="number" min="1" max="600" step="1" placeholder={`${d?.duration ?? 360} (default)`} value={app.request.duration ?? ''}
+						oninput={(event) => { const value = event.currentTarget.value.trim(); app.request.duration = value ? Number(value) : undefined; }}
+						title="Upper limit in seconds. The song can finish earlier." /></label>
+				{/if}
 			</div>
-			<label class="duration-toggle" title="Let the song finish naturally from the lyrics and arrangement">
-				<input type="checkbox" checked={durationAuto} onchange={(event) => { app.request.duration = event.currentTarget.checked ? 0 : undefined; }} id="duration-auto" aria-label="Let the song finish naturally from the lyrics and arrangement" />
-				<span class="duration-switch-track" aria-hidden="true"></span>
-			</label>
+			<LyricFitMeter {fit} auto={durationAuto} duration={app.request.duration ?? d?.duration ?? 360} />
 		</div>
 		<label class="composition-choice"><input type="checkbox" bind:checked={freshComposition} disabled={!!app.remix} aria-label="New composition each time" /><span><strong>New composition each time</strong><small>{app.remix ? 'Remix keeps the source composition and seeds.' : freshComposition ? 'A fresh musical idea from your selected styles for every track.' : 'Uses the loaded score, audio codes and seed settings.'}</small></span></label>
 		<details class="score-editor"><summary>Composition score <span>{freshComposition ? "New score each time" : app.request.abc ? "Loaded score enabled" : "Let YuE2 compose"}</span></summary>
@@ -796,18 +829,6 @@
 			</select>
 		</div>
 		<div class="meta-grid">
-			<label
-				>Duration <span class="unit">sec</span><input
-					type="number"
-					min="1"
-					step="1"
-					placeholder={durationAuto ? 'From lyrics' : 'Server default'}
-					value={durationAuto ? '' : app.request.duration ?? ''}
-					disabled={durationAuto}
-					oninput={(event) => { const value = event.currentTarget.value.trim(); app.request.duration = value ? Number(value) : undefined; }}
-					title="Target length in seconds. Automatic mode estimates from lyrics; the model may finish earlier."
-				/></label
-			>
 			<label
 				>LM batch <input
 					type="text"
@@ -840,14 +861,15 @@
     {#if !app.remix.request.abc}<p>This track has no saved score, so its melody and arrangement are not locked.</p>{/if}
    </section>
   {:else}<p class="remix-hint">To vary a saved song with the same seed, choose its Remix button.</p>{/if}
+  <QualityControls />
+  <details class="engine-drawer"><summary><span>Engine settings</span><small>{automatic ? 'Automatic' : 'Manual'} · sampling, render &amp; output</small></summary>
   <div class="engine-mode" aria-label="Production settings mode"><button type="button" class:selected={automatic} aria-pressed={automatic} onclick={() => setAutomatic(true)}>Automatic</button><button type="button" class:selected={!automatic} aria-pressed={!automatic} onclick={() => setAutomatic(false)}>Manual control</button></div>
   <details class="engine-options"><summary>Output, mastering &amp; profile details</summary>  <div class="profile-title"><Sparkles size={19}/><div><strong>{automatic ? profile.name : 'Your custom settings'}</strong><p>{automatic ? 'Follows your active sound directions' : 'Sampling and render controls are unlocked below'}</p></div></div>
   {#if automatic}<div class="engine-metrics"><div><span>COMPOSITION</span><strong>{profile.scoreTemperature.toFixed(2)}</strong><small>score temperature</small></div><div><span>RENDER</span><strong>{profile.settings.steps}<em> steps</em></strong><small>model default</small></div><div><span>OUTPUT</span><strong>{app.format === 'mp3' ? '320' : app.format === 'mp4' ? '16:9' : app.format.slice(3)}<em>{app.format === 'mp3' ? ' kbps' : app.format === 'mp4' ? ' video' : ' bit'}</em></strong><small>{app.format === 'mp3' ? 'MP3 encoding' : app.format === 'mp4' ? 'MP4 video' : 'WAV encoding'}</small></div></div>{/if}
   <label class="engine-format">Delivery format<select aria-label="Delivery format" bind:value={app.format}><option value="mp3">MP3 · 320 kbps in Auto</option><option value="wav16">WAV · 16 bit</option><option value="wav24">WAV · 24 bit</option><option value="wav32">WAV · 32 bit float</option><option value="mp4">MP4 · 16:9 video</option></select></label>
   <label class="engine-format">Automatic mastering<select aria-label="Automatic mastering" bind:value={app.request.mastering_profile} title="Optional EBU R128 loudness normalization with a true-peak ceiling. It sets delivery level; it does not repair mix problems."><option value="off">Off · preserve current output</option><option value="streaming">Streaming · −14 LUFS, −1 dBTP</option><option value="broadcast">Broadcast · −23 LUFS, −1 dBTP</option></select></label>
   <p class="engine-note">{automatic ? 'Style-guided composition with the model’s stable audio defaults. A starting point you can fine-tune, not a guarantee of the best take.' : 'Imported and reused settings are preserved. Switch to Automatic to apply the current style profile.'}</p></details>
- </section>
-	<details id="score-sampling" class="card collapsible" open>
+	<details id="score-sampling" class="collapsible drawer-panel" open>
 		<summary>
 			<span>Score sampling</span>
 			<button
@@ -866,7 +888,7 @@
 		<div class="details-body"><SamplingControls values={automatic ? profile.settings.abc_sampling : app.request.abc_sampling} defaults={d?.abc_sampling} {automatic} onchange={(key, value) => { app.request.abc_sampling[key] = value; }} /></div>
 	</details>
 
-	<details id="semantic-sampling" class="card collapsible" open>
+	<details id="semantic-sampling" class="collapsible drawer-panel" open>
 		<summary>
 			<span>Semantic sampling</span>
 			<button
@@ -885,7 +907,7 @@
 		<div class="details-body"><SamplingControls values={automatic ? profile.settings.semantic_sampling : app.request.semantic_sampling} defaults={d?.semantic_sampling} {automatic} onchange={(key, value) => { app.request.semantic_sampling[key] = value; }} /><details class="sampling-extra"><summary>Guidance &amp; audio codes</summary><label class="field">CFG scale<input type="number" step="0.1" disabled={automatic} value={automatic ? profile.settings.cfg_scale : app.request.cfg_scale} placeholder={ph(d?.cfg_scale)} oninput={e => app.request.cfg_scale = e.currentTarget.value === '' ? undefined : Number(e.currentTarget.value)}/></label><label class="field">Audio codes<textarea rows="2" bind:value={app.request.semantic_tokens} disabled={automatic}></textarea></label></details></div>
 	</details>
 
-	<details id="render-workbench" class="card collapsible" open>
+	<details id="render-workbench" class="collapsible drawer-panel" open>
 		<summary>
 			<span>Render &amp; output</span>
 			<button
@@ -962,7 +984,16 @@
 	</details>
 
 
+	</details>
+	</section>
+
 	<div class="action-bar">
+		<ul class="preflight" aria-label="Pre-flight check">
+			<li class={`hue-chip fit-${fit.level}`} title={fit.advice}>{fit.estimate ? `Length ${durationAuto ? `≈ ${clock(fit.estimate)}` : clock(app.request.duration ?? d?.duration ?? 360)}` : 'Instrumental'}</li>
+			{#if fit.estimate}<li class={`hue-chip ${chorusWarning ? (fit.choruses ? 'fit-warn' : 'fit-bad') : 'sec-chorus'}`} title={chorusWarning || 'The chorus returns, so the chorus lock can repeat its melody.'}>{fit.choruses ? `Chorus ×${fit.choruses}` : 'No chorus'}</li>{/if}
+			<li class={`hue-chip ${quality.promptMode === 'legacy' ? 'fit-warn' : styleChars > 300 ? 'fit-bad' : 'fit-good'}`} title="Characters of style text sent to the model">{quality.promptMode === 'legacy' ? 'Legacy prompt' : 'Clean prompt'} · {styleChars}</li>
+			<li class={`hue-chip ${quality.polish === 'off' ? 'stage-idle' : 'stage-encode'}`}>{quality.polish === 'off' ? 'Polish off' : quality.polish === 'stems' ? 'Vocal stem polish' : 'Vocal polish'}{(app.request.mastering_profile || 'off') !== 'off' ? ' · −14 LUFS' : ''}</li>
+		</ul>
 		<button
 			type="button"
 			class="ghost-btn"
@@ -1055,16 +1086,12 @@
 	.request-form > .words-card,
 	.request-form > #arrangement-workbench,
 	.request-form > .engine-card,
-	.request-form > #render-workbench,
 	.request-form > .action-bar { grid-column: 1 / -1; }
 	.request-form > .sound-card { grid-row: 2; }
 	.request-form > .words-card { grid-row: 3; }
 	.request-form > #arrangement-workbench { grid-row: 4; }
-	.request-form > #score-sampling { grid-column: 1; grid-row: 5; }
-	.request-form > #semantic-sampling { grid-column: 2; grid-row: 5; }
-	.request-form > .engine-card { grid-row: 6; }
-	.request-form > #render-workbench { grid-row: 7; }
-	.request-form > .action-bar { grid-row: 8; }
+	.request-form > .engine-card { grid-row: 5; }
+	.request-form > .action-bar { grid-row: 6; }
 	.request-form > input[type='file'] { display: none; }
 	@media (max-width: 800px) { .request-form { display:flex; flex-direction:column; } .request-form > * { width:100%; } }
 	.card {
@@ -1084,7 +1111,7 @@
 		gap: 0.5rem;
 	}
 	.card-head h3 {
-		font-size: 0.72rem;
+		font-size: .75rem;
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.12em;
@@ -1098,7 +1125,7 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.3rem;
-		font-size: 0.72rem;
+		font-size: .75rem;
 		font-weight: 600;
 		color: var(--fg-dim);
 		background: var(--bg-btn);
@@ -1207,7 +1234,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.3rem;
-		font-size: 0.72rem;
+		font-size: .75rem;
 		font-weight: 600;
 		color: var(--fg-dim);
 	}
@@ -1230,7 +1257,7 @@
 		cursor: pointer;
 		list-style: none;
 		padding: 0.85rem 1rem;
-		font-size: 0.72rem;
+		font-size: .75rem;
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.12em;
@@ -1353,27 +1380,15 @@
 .generate-lyrics:disabled { opacity:.45; cursor:not-allowed; }
 .music-mixer { margin-top:.55rem; padding:.65rem; border:1px solid rgba(45,212,163,.3); border-radius:.6rem; background:rgba(45,212,163,.045); }
 .ring-stage { display:flex; flex-wrap:wrap; justify-content:center; gap:1rem; }
-.style-ring-wrap { display:flex; flex-direction:column; align-items:center; gap:.28rem; width:8.4rem; text-align:center; color:var(--fg-dim); font-size:.66rem; }
-.style-ring-wrap > button { border:0; background:transparent; color:var(--fg-faint); font-size:.62rem; cursor:pointer; }
+.style-ring-wrap { display:flex; flex-direction:column; align-items:center; gap:.28rem; width:8.4rem; text-align:center; color:var(--fg-dim); font-size:.75rem; }
+.style-ring-wrap > button { border:0; background:transparent; color:var(--fg-faint); font-size:.75rem; cursor:pointer; }
 .style-ring-wrap > button:hover { color:var(--error); }
 .custom-style-ring { width:100%; }
-.mixer-help { margin-top:.55rem; color:var(--fg-dim); font-size:.68rem; line-height:1.45; text-align:center; }
-.duration-auto { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.8rem .9rem; border:1px solid var(--border-strong); border-radius:12px; background:color-mix(in srgb, var(--accent) 7%, var(--bg-input)); }
-.duration-copy { display:flex; flex-direction:column; gap:.22rem; min-width:0; }
-.duration-copy .field-name { font-size:.82rem; color:var(--fg); }
-.duration-help { color:var(--fg-dim); font-size:.7rem; line-height:1.4; }
-.duration-toggle { position:relative; display:flex; align-items:center; flex:0 0 auto; cursor:pointer; }
-.duration-toggle input { position:absolute; width:1px; height:1px; opacity:0; }
-.duration-switch-track { position:relative; width:2.75rem; height:1.55rem; border:1px solid var(--border-strong); border-radius:999px; background:var(--bg-btn); transition:background .18s, border-color .18s, box-shadow .18s; }
-.duration-switch-track::after { content:''; position:absolute; top:.17rem; left:.18rem; width:1.08rem; height:1.08rem; border-radius:50%; background:var(--fg-dim); transition:transform .18s cubic-bezier(.2,.8,.2,1), background .18s; }
-.duration-toggle input:checked + .duration-switch-track { border-color:color-mix(in srgb, #2dd4a3 70%, transparent); background:color-mix(in srgb, #2dd4a3 25%, var(--bg-btn)); }
-.duration-toggle input:checked + .duration-switch-track::after { transform:translateX(1.18rem); background:#73f0c8; }
-.duration-toggle input:focus-visible + .duration-switch-track { outline:2px solid var(--focus); outline-offset:3px; }
+.mixer-help { margin-top:.55rem; color:var(--fg-dim); font-size:.75rem; line-height:1.45; text-align:center; }
 .meta-grid input:disabled { opacity:.68; cursor:not-allowed; }
-@media (max-width: 520px) { .duration-auto { align-items:flex-start; } .duration-help { max-width:28ch; } }
 
 .lyric-blend{color:var(--fg)}
-.lyric-blend-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.lyric-blend-heading strong{font-size:.9rem}.lyric-blend-heading p{color:var(--fg-dim);margin:4px 0 0!important;font-size:.73rem!important}.lyric-slot-count{white-space:nowrap;border:1px solid var(--border);border-radius:20px;padding:5px 10px;font-size:.68rem;color:var(--fg-dim)}
-.lyric-blend-slots{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.lyric-blend-slot{min-width:0;display:flex;flex-direction:column;padding:13px;border:1px solid color-mix(in srgb,var(--slot-color) 35%,var(--border));border-radius:12px;background:color-mix(in srgb,var(--slot-color) 5%,var(--bg-card));box-shadow:inset 0 2px var(--slot-color)}.lyric-blend-slot.empty{border-style:dashed;box-shadow:none;background:transparent}.lyric-slot-head{display:flex;gap:7px;align-items:center;min-height:25px;margin-bottom:10px;font-size:.64rem;color:var(--fg-dim)}.lyric-slot-number{color:color-mix(in srgb,var(--slot-color) 55%,var(--fg));font-weight:700;letter-spacing:.05em}.lyric-remove{margin-left:auto;border:0;background:transparent;color:var(--fg-dim);cursor:pointer;padding:4px;border-radius:4px}.lyric-remove:hover{color:var(--fg);background:var(--bg-btn)}.lyric-blend-slot select{width:100%;min-width:0;font-size:.73rem;padding:10px 8px;border-radius:8px}.lyric-influence{display:flex;flex-direction:column;align-items:center;padding:10px 0 2px}.lyric-slot-description{font-size:.7rem!important;color:var(--fg-dim);line-height:1.55!important;margin:10px 0 0!important}.lyric-slot-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:170px;padding:16px;text-align:center;color:var(--fg-dim)}.lyric-slot-empty>span{font-size:26px;font-weight:300;color:var(--slot-color);border:1px dashed var(--border);border-radius:50%;width:46px;height:46px;display:grid;place-items:center}.lyric-slot-empty p{font-size:.72rem!important;max-width:23ch}.lyric-blend-help{font-size:.67rem!important;color:var(--fg-dim);margin:12px 0!important}.lyric-saved-blends{border-top:1px solid var(--border);padding:10px 0;margin-bottom:6px}.lyric-saved-blends>summary{cursor:pointer;color:var(--fg-dim);font-size:.72rem}.lyric-blend :is(select,button):focus-visible{outline:2px solid var(--slot-color,var(--accent));outline-offset:2px}
+.lyric-blend-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.lyric-blend-heading strong{font-size:.9rem}.lyric-blend-heading p{color:var(--fg-dim);margin:4px 0 0!important;font-size:.75rem!important}.lyric-slot-count{white-space:nowrap;border:1px solid var(--border);border-radius:20px;padding:5px 10px;font-size:.75rem;color:var(--fg-dim)}
+.lyric-blend-slots{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.lyric-blend-slot{min-width:0;display:flex;flex-direction:column;padding:13px;border:1px solid color-mix(in srgb,var(--slot-color) 35%,var(--border));border-radius:12px;background:color-mix(in srgb,var(--slot-color) 5%,var(--bg-card));box-shadow:inset 0 2px var(--slot-color)}.lyric-blend-slot.empty{border-style:dashed;box-shadow:none;background:transparent}.lyric-slot-head{display:flex;gap:7px;align-items:center;min-height:25px;margin-bottom:10px;font-size:.75rem;color:var(--fg-dim)}.lyric-slot-number{color:color-mix(in srgb,var(--slot-color) 55%,var(--fg));font-weight:700;letter-spacing:.05em}.lyric-remove{margin-left:auto;border:0;background:transparent;color:var(--fg-dim);cursor:pointer;padding:4px;border-radius:4px}.lyric-remove:hover{color:var(--fg);background:var(--bg-btn)}.lyric-blend-slot select{width:100%;min-width:0;font-size:.75rem;padding:10px 8px;border-radius:8px}.lyric-influence{display:flex;flex-direction:column;align-items:center;padding:10px 0 2px}.lyric-slot-description{font-size:.75rem!important;color:var(--fg-dim);line-height:1.55!important;margin:10px 0 0!important}.lyric-slot-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:170px;padding:16px;text-align:center;color:var(--fg-dim)}.lyric-slot-empty>span{font-size:26px;font-weight:300;color:var(--slot-color);border:1px dashed var(--border);border-radius:50%;width:46px;height:46px;display:grid;place-items:center}.lyric-slot-empty p{font-size:.75rem!important;max-width:23ch}.lyric-blend-help{font-size:.75rem!important;color:var(--fg-dim);margin:12px 0!important}.lyric-saved-blends{border-top:1px solid var(--border);padding:10px 0;margin-bottom:6px}.lyric-saved-blends>summary{cursor:pointer;color:var(--fg-dim);font-size:.75rem}.lyric-blend :is(select,button):focus-visible{outline:2px solid var(--slot-color,var(--accent));outline-offset:2px}
 @media(max-width:680px){.lyric-blend-slots{grid-template-columns:1fr}.lyric-slot-empty{min-height:85px;padding:10px}.lyric-influence{padding:4px 0}.lyric-slot-description{margin-top:4px!important}}
 </style>

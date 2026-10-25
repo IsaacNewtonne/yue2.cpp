@@ -47,8 +47,8 @@
  button{display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--fg);cursor:pointer;flex:none;transition:background-color 180ms ease,color 180ms ease}
  button:hover{background:var(--bg-btn-hover)}button:disabled{opacity:.35;cursor:default}
  .main-play{background:var(--accent);color:var(--bg);width:28px;height:28px}
- .now-playing{display:block;text-align:center;line-height:14px;width:100%;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
- .seek-row{width:100%;max-width:340px;justify-self:center;display:flex;align-items:center;gap:6px;font:9px ui-monospace,monospace;color:var(--fg-dim)}
+ .now-playing{display:block;text-align:center;line-height:14px;width:100%;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+ .seek-row{width:100%;max-width:340px;justify-self:center;display:flex;align-items:center;gap:6px;font:12px ui-monospace,monospace;color:var(--fg-dim)}
  .seek-row input{flex:1;width:0;min-width:0;height:10px;accent-color:var(--accent);margin:0;cursor:pointer}
- @media(max-width:680px){.global-player{min-width:0;width:100%;flex:1;gap:8px}.now-playing{font-size:10px}}
+ @media(max-width:680px){.global-player{min-width:0;width:100%;flex:1;gap:8px}.now-playing{font-size:12px}}
 </style>

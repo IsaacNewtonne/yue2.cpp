@@ -129,7 +129,7 @@
 	.library-tools { display: flex; gap: .6rem; align-items: center; margin-bottom: .25rem; }
 	.search { flex: 1; display: flex; align-items: center; gap: .5rem; color: var(--fg-dim); min-width: 0; padding: 0 .75rem; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card); }
 	.search input { width: 100%; border: 0 !important; background: transparent !important; padding: .8rem .2rem !important; font-size: .8rem; }
-	.library-tools button, .no-results button { display: inline-flex; align-items: center; gap: .4rem; color: var(--fg-dim); background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: .8rem; cursor: pointer; font-size: .72rem; }
+	.library-tools button, .no-results button { display: inline-flex; align-items: center; gap: .4rem; color: var(--fg-dim); background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: .8rem; cursor: pointer; font-size: .75rem; }
 	.library-tools button.active { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--bg-card)); }
 	.library-tools button:disabled { opacity: .5; cursor: not-allowed; }
 	.file-input { display: none; }
@@ -139,8 +139,8 @@
 	.record { display: grid; place-items: center; width: 150px; height: 150px; position: absolute; right: 10px; top: 20px; border-radius: 50%; background: repeating-radial-gradient(circle, #161720 0 2px, #252630 3px, #11121a 4px); box-shadow: 7px 10px 24px #0006; border: 1px solid #42434f; transform: rotate(20deg); }
 	.record span { width: 57px; height: 57px; display: grid; place-items: center; border-radius: 50%; background: var(--accent-grad); }
 	.record span::after { content: ''; width: 9px; height: 9px; background: #12121a; border-radius: 50%; }
-	.record-tag { position: absolute; bottom: 0; left: 24px; font: 8px ui-monospace, monospace; letter-spacing: .14em; color: var(--fg-faint); }
-	.empty-kicker { font-size: .56rem; letter-spacing: .17em; color: var(--accent); font-weight: 600; margin-bottom: .4rem; }
+	.record-tag { position: absolute; bottom: 0; left: 24px; font: 12px ui-monospace, monospace; letter-spacing: .14em; color: var(--fg-faint); }
+	.empty-kicker { font-size: .75rem; letter-spacing: .17em; color: var(--accent); font-weight: 600; margin-bottom: .4rem; }
 	.start-link { display: inline-flex; align-items: center; gap: .7rem; text-decoration: none; color: var(--fg); font-size: .77rem; border: 1px solid var(--border-strong); border-radius: 999px; padding: .65rem 1rem; margin-top: 1rem; background: var(--bg-card-2); }
 	.start-link:hover { border-color: var(--accent); }
 	@media (max-width: 450px) { .library-tools { flex-wrap: wrap; } .search { flex-basis: 100%; } }

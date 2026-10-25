@@ -3,7 +3,10 @@
  import { lyricSections, structureWarnings, addFinalChorus } from '../lib/song-structure.ts';
  import { app } from '../lib/state.svelte.js';
  import EnsembleBuilder from './EnsembleBuilder.svelte';
- import { delivery, songPlan, lyricWarnings, estimatedDuration, voiceAssignments } from '../lib/producer.js';
+ import { delivery, songPlan, lyricWarnings, voiceAssignments } from '../lib/producer.js';
+ import { sectionKind, SECTION_KIND_NAMES } from '../lib/prompt-clean.ts';
+ import { quality } from '../lib/quality.svelte.ts';
+ const voiceOf = (label: string) => Math.min(4, Number(/\bVoice\s+(\d+)/i.exec(label)?.[1] || 1));
  let { disabled = false }: { disabled?: boolean } = $props();
  const arrangementChoice = $derived(app.producer.structure.trim() ? arrangementPresets.find(preset => preset.direction === app.producer.structure)?.id ?? 'custom' : 'auto');
  function chooseArrangement(id: string) {
@@ -57,14 +60,14 @@
   <p>Reuses these descriptions. YuE2 cannot guarantee the same singer or exact voice count; a seed is not a voice identity.</p>
   <div class="voice-grid">
   {#each app.producer.voiceProfiles.slice(0, app.producer.voices) as profile, i}
-   <label>Voice {i + 1}<select aria-label={`Voice ${i + 1} profile`} bind:value={app.producer.voiceProfiles[i]} disabled={app.producer.voiceLocked || app.producer.presence === 0}>
+   <label class={`voice-${i + 1}`}><span class={`hue-chip voice-${i + 1}`}>Voice {i + 1}</span><select aria-label={`Voice ${i + 1} profile`} bind:value={app.producer.voiceProfiles[i]} disabled={app.producer.voiceLocked || app.producer.presence === 0}>
     {#if !voiceChoices.some(([, description]) => description === profile)}<option value={profile}>Saved custom voice — {profile}</option>{/if}
     {#each voiceChoices as [name, description]}<option value={description}>{name}</option>{/each}
    </select><small class="voice-description">{profile}</small></label>
   {/each}
   </div>
   {#if assignments.length}
-   <div class="cast-assignments"><strong>Voice assignments for the next generation</strong><p>Unassigned vocal sections rotate through the selected voices. Your lyric text stays in the editor; these labels are added to the generation request.</p><ul>{#each assignments as assignment}<li>{assignment}</li>{/each}</ul></div>
+   <div class="cast-assignments"><strong>Voice assignments for the next generation</strong><p>{quality.promptMode === 'legacy' ? 'Unassigned vocal sections rotate through the selected voices. Your lyric text stays in the editor; these labels are added to the generation request.' : 'Clean prompt: YuE2 does not follow per-section voice labels reliably, so the request asks for duet or group vocals instead. Switch Prompt format to Legacy to send these labels.'}</p><ul>{#each assignments as assignment}<li class={`voice-${voiceOf(assignment)}`}>{assignment}</li>{/each}</ul></div>
   {/if}
   </section>
   <section class="planner-group"><h4>3. Song structure</h4>
@@ -84,14 +87,14 @@
    <div class="section-plan" aria-label="Lyric section plan">
     <strong>Sections in your lyrics</strong>
     <p>The generation follows this order. Chorus returns request the same core melody and hook, with fuller backing than the verses.</p>
-    {#if sections.length}<ol>{#each sections as section}<li class:chorus={section.chorus}>{section.label}{#if section.chorus}<small>Recurring hook</small>{/if}</li>{/each}</ol>{:else}<p>Add section labels in Lyrics to define the form.</p>{/if}
+    {#if sections.length}<ol>{#each sections as section}{@const kind = sectionKind(section.label, section.body)}<li class={`sec-${kind}`} class:chorus={section.chorus}>{section.label}<small class="kind">{SECTION_KIND_NAMES[kind]}{section.chorus ? ' · recurring hook' : ''}</small></li>{/each}</ol>{:else}<p>Add section labels in Lyrics to define the form.</p>{/if}
     {#each formWarnings as warning}<p class="warning">{warning}</p>{/each}
     {#if canAddChorus}<button type="button" onclick={repeatChorus}>Repeat existing hook before outro</button>{/if}
     {#if beforeChorusEdit!==null && app.request.lyrics===chorusEdit}<button type="button" onclick={()=>{app.request.lyrics=beforeChorusEdit!;beforeChorusEdit=null;}}>Undo chorus repeat</button>{/if}
    </div>
   {/if}
   <p>Three takes run one at a time and keep the same plan and voice descriptions. Each has fresh composition and audio seeds. Reloading recovers the active take; remaining takes are not submitted.</p>
-  {#if app.request.duration === 0}<p>Estimated length: {estimatedDuration(app.producer, app.request.lyrics || '')} seconds (tempo and phrase estimate; actual length can differ).</p>{/if}
+  {#if app.request.duration === 0}<p>Song length follows this plan: see the lyric-fit meter under Composition.</p>{/if}
   </section>
   {#each warnings as warning}<p class="warning">{warning}</p>{/each}
  </fieldset>
@@ -114,8 +117,7 @@
  .section-plan {padding:.8rem;border:1px solid var(--border);border-radius:8px;font-size:.8rem;min-width:0}
  .section-plan ol {display:flex;flex-wrap:wrap;gap:.5rem;list-style-position:inside;padding:0}
  .section-plan li {padding:.5rem;border:1px solid var(--border);border-radius:6px;overflow-wrap:anywhere;max-width:100%}
- .section-plan li.chorus {border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
- .section-plan small {display:block;color:var(--accent);margin-top:.3rem}
+ .section-plan small {display:block;color:color-mix(in srgb,var(--hue,var(--accent)) 60%,var(--fg));margin-top:.3rem;font-size:.75rem}
  .section-plan button {padding:.6rem;margin:.4rem .4rem 0 0;border:1px solid var(--border);border-radius:6px;background:var(--bg-btn);color:var(--fg);cursor:pointer}
  .warning { color:var(--accent); }
  fieldset:disabled { opacity:.55; }
@@ -123,7 +125,7 @@
  .planner-group { display:grid; gap:.65rem; min-width:0; padding:1rem; border:1px solid var(--border); border-radius:12px; background:color-mix(in srgb,var(--bg-input) 50%,transparent); }
  h4 { font-size:.82rem; color:var(--fg); margin:0 0 .25rem; }
  .voice-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
- .voice-description { display:block; margin-top:.4rem; color:var(--fg-dim); font-size:.7rem; line-height:1.5; }
+ .voice-description { display:block; margin-top:.4rem; color:var(--fg-dim); font-size:.75rem; line-height:1.5; }
  @media(max-width:600px) { .voice-grid {grid-template-columns:1fr;} .planner-group {padding:.75rem;} }
  @media(max-width:480px) { .row { flex-direction:column; } }
 </style>

@@ -29,6 +29,6 @@
 	.dial { width: 90px; height: 90px; border-radius: 50%; background: conic-gradient(var(--color) var(--fill), #ffffff18 0); display: grid; place-items: center; touch-action: none; cursor: pointer; margin: .4rem auto; }
 	.dial span { background-color: var(--bg, #16161e); background-image: linear-gradient(#06161599,#06161599),var(--thumbnail,none); background-position:center; background-size:cover; border:1px solid #ffffff20; border-radius:50%; width:70px; height:70px; display:grid; place-items:center; font-weight:700; color:#f2fffb; text-shadow:0 1px 3px #000; pointer-events:none; }
 	.dial:focus-visible { outline: 3px solid var(--color); outline-offset: 4px; }
-	.exact { display: flex; gap: .25rem; align-items: center; font-size: .7rem; }
+	.exact { display: flex; gap: .25rem; align-items: center; font-size: .75rem; }
 	.exact input { width: 3.7rem; padding: .25rem; }
 </style>

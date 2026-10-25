@@ -16,6 +16,8 @@ export function updateActivity(line: string) {
 		const tokens = line.match(/\[AR\] (.+?) (\d+)\/(\d+)$/);
 		if (tokens) activity.detail = `${tokens[1]} · ${tokens[2]} / ${tokens[3]} token budget`;
 	} else if (/\[VAE\]/.test(line)) activityStage('Decoding audio', 'Turning the generated sound into audio');
+	else if (/\[Score\]/.test(line)) activityStage('Checking the score', line.replace(/^.*\[Score\]\s*/, ''));
+	else if (/\[(Polish|Master)\]/.test(line)) activityStage('Polishing vocals', 'Vocal polish and loudness');
 	else if (/\[MP3\] Encoding/.test(line)) activityStage('Encoding audio', 'Preparing the audio file');
 	else if (/\[NAR\] (Song|Graph|Solved)/.test(line)) activityStage('Rendering audio', 'Preparing the next audio chunk');
 }
@@ -24,8 +26,28 @@ export function logTone(line: string): string {
 	if (/fatal|error|failed|unavailable/i.test(line)) return 'error';
 	if (/warn|cancel|clamp/i.test(line)) return 'warning';
 	if (/\bdone\b|listening|solved|loaded|created/i.test(line)) return 'success';
-	if (/\[AR\]|\[BPE\]/.test(line)) return 'compose';
+	if (/\[AR\]|\[BPE\]|\[Score\]/.test(line)) return 'compose';
 	if (/\[NAR\]/.test(line)) return 'render';
-	if (/\[VAE\]|\[MP3\]|\[WAV\]/.test(line)) return 'audio';
+	if (/\[VAE\]|\[MP3\]|\[WAV\]|\[Polish\]|\[Master\]/.test(line)) return 'audio';
 	return 'info';
 }
+
+// One colour per pipeline stage, shared by the activity card and the log.
+export type StageTone = 'idle' | 'prepare' | 'compose' | 'render' | 'decode' | 'encode' | 'art' | 'done' | 'error';
+export function stageTone(stage: string): StageTone {
+	if (/fail|error|stopp|cancel/i.test(stage)) return 'error';
+	if (/complete|finished|ready to play/i.test(stage)) return 'done';
+	if (/artwork|mp4|video/i.test(stage)) return 'art';
+	if (/encod|master|polish/i.test(stage)) return 'encode';
+	if (/decod/i.test(stage)) return 'decode';
+	if (/render|synth|flow/i.test(stage)) return 'render';
+	if (/compos|score|semantic|perform/i.test(stage)) return 'compose';
+	if (/prepar|queue|reconnect|waiting/i.test(stage)) return 'prepare';
+	return 'idle';
+}
+export const STAGE_STEPS: { tone: StageTone; label: string }[] = [
+	{ tone: 'compose', label: 'Compose' },
+	{ tone: 'render', label: 'Render' },
+	{ tone: 'decode', label: 'Decode' },
+	{ tone: 'encode', label: 'Master' }
+];

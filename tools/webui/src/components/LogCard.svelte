@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { activity, logTone } from '../lib/activity.svelte.js';
+	import { activity, logTone, stageTone, STAGE_STEPS } from '../lib/activity.svelte.js';
 	import { GenerationEta } from '../lib/generation-eta.ts';
 	import { SSE_RECONNECT_MS, LOG_MAX_LINES } from '../lib/config.js';
 	import { ChevronDown, Disc3, Terminal, Check, CircleAlert } from '@lucide/svelte';
@@ -12,6 +12,8 @@
 	const spinning = $derived(activity.running && connected);
 	const indeterminate = $derived(spinning && activity.percent === null);
 	const displayStage = $derived(!connected ? 'Reconnecting' : activity.running ? activity.stage : finished ? 'Track complete' : outcome === 'failed' ? 'Generation failed' : outcome === 'cancelled' ? 'Generation cancelled' : 'Ready when you are');
+	const tone = $derived(stageTone(displayStage));
+	const toneIndex = $derived(STAGE_STEPS.findIndex((step) => step.tone === tone));
 
 	let lines = $state<string[]>([]);
     let overall = $state(false);
@@ -84,11 +86,14 @@
   <Disc3 size={15} /> <span class="card-label">Studio activity</span>
   <span class="connection" class:offline={!connected}><i></i>{connected ? 'Live' : 'Connecting'}</span>
  </div>
- <div class="record-panel" class:finished class:spinning>
+ <div class={`record-panel stage-${tone}`} class:finished class:spinning>
   <div class="record-heading" aria-live="polite">
    <span class="eyebrow">{finished ? 'READY TO PLAY' : spinning ? 'ON THE TURNTABLE' : 'YOUR NEXT RECORD'}</span>
    <h3>{displayStage}</h3>
   </div>
+  {#if activity.running || finished}
+   <ol class="stage-steps" aria-label="Pipeline stages">{#each STAGE_STEPS as step, index}<li class={`hue-chip stage-${step.tone}`} class:current={step.tone === tone} class:past={finished || (toneIndex >= 0 && index < toneIndex)}>{step.label}</li>{/each}</ol>
+  {/if}
   <div class="record-wrap" role="progressbar" aria-label="Track progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={indeterminate || !connected ? undefined : progress} aria-valuetext={indeterminate ? 'Working, estimating progress' : finished ? 'Track complete' : activity.running ? `${Math.floor(progress)} percent estimated` : displayStage}>
    <svg class="record" viewBox="0 0 216 216" aria-hidden="true">
     <circle class="finish-halo" cx="108" cy="108" r="98" />
@@ -130,11 +135,11 @@
 
 <style>
  .card{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-card);box-shadow:var(--shadow);overflow:hidden;min-width:0}
- .card-header{display:flex;align-items:center;gap:.5rem;padding:.85rem 1rem;color:var(--fg-dim);font-size:.68rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;border-bottom:1px solid var(--border)}
- .connection{margin-left:auto;display:flex;align-items:center;gap:.4rem;font-size:.58rem;font-weight:500;letter-spacing:.04em;color:var(--fg-dim)}
+ .card-header{display:flex;align-items:center;gap:.5rem;padding:.85rem 1rem;color:var(--fg-dim);font-size:.75rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;border-bottom:1px solid var(--border)}
+ .connection{margin-left:auto;display:flex;align-items:center;gap:.4rem;font-size:.75rem;font-weight:500;letter-spacing:.04em;color:var(--fg-dim)}
  .connection i{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px color-mix(in srgb,var(--accent) 40%,transparent)}.connection.offline i{background:var(--fg-faint);box-shadow:none}
  .record-panel{padding:1.2rem 1rem 1rem;text-align:center;background:radial-gradient(ellipse at 50% 47%,color-mix(in srgb,var(--accent) 11%,transparent),transparent 69%),linear-gradient(160deg,var(--bg-panel),var(--bg-card-2));color:var(--fg)}
- .record-heading{min-height:42px}.eyebrow{font-size:.53rem;letter-spacing:.21em;color:var(--fg-dim);font-weight:600}h3{font-size:.95rem;font-weight:550;letter-spacing:-.025em;margin:.35rem 0 0;line-height:1.35}
+ .record-heading{min-height:42px}.eyebrow{font-size:.75rem;letter-spacing:.21em;color:var(--fg-dim);font-weight:600}h3{font-size:.95rem;font-weight:550;letter-spacing:-.025em;margin:.35rem 0 0;line-height:1.35}
  .record-wrap{width:min(100%,232px);margin:.45rem auto .8rem;position:relative}.record{display:block;width:100%;overflow:visible;filter:drop-shadow(0 12px 16px #0005)}
  .finish-halo{fill:none;stroke:var(--fg);stroke-opacity:.04;stroke-width:7}.finish-ring{fill:none;stroke:var(--fg);stroke-opacity:.85;stroke-width:1.25}
  .record-spin{transform-origin:108px 108px;animation:record-turn 9s linear infinite;animation-play-state:paused}.spinning .record-spin{animation-play-state:running}
@@ -142,12 +147,12 @@
  .groove{fill:none;stroke:var(--fg);stroke-opacity:.09;stroke-width:1}.groove-progress{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linecap:butt;transition:stroke-dasharray 1.5s ease;opacity:calc(.5 + var(--ring-index) * .065)}.groove-progress.complete{stroke:var(--accent)}
  .record-sheen{fill:color-mix(in srgb,var(--fg) 3%,transparent);pointer-events:none}.record-label{fill:var(--accent);stroke:var(--accent-2);stroke-width:1}.label-type{fill:var(--bg);font-size:8px;font-weight:800;letter-spacing:2px}.label-side{fill:var(--bg);font-size:4px;font-weight:700;letter-spacing:1px}.spindle{fill:var(--bg-input);stroke:var(--accent-2);stroke-width:1}
  .seeking{fill:none;stroke:var(--accent-2);stroke-width:3;transform-origin:108px 108px;animation:record-turn 3s linear infinite}
- .finish-label{position:absolute;bottom:0;left:50%;transform:translate(-50%,50%);white-space:nowrap;background:var(--bg-panel);padding:3px 9px;color:var(--fg-dim);font-size:.47rem;letter-spacing:.18em}.finished .finish-label{color:var(--accent)}
- .readout{display:flex;flex-direction:column;align-items:center;gap:.3rem;min-height:49px}.percent{display:flex;align-items:center;gap:.3rem;font-size:1.55rem;line-height:1.25;font-weight:550;letter-spacing:-.06em;font-variant-numeric:tabular-nums}.percent-unit{font-size:.75rem;color:var(--fg-dim);letter-spacing:0;align-self:center}.finished .percent{color:var(--accent)}.waiting{font-size:.8rem;letter-spacing:0;font-weight:500}.estimate{font-size:.64rem;color:var(--fg-dim);font-variant-numeric:tabular-nums}
- .record-caption{display:flex;align-items:center;gap:.55rem;justify-content:center;margin-top:1rem;color:var(--fg-dim);font-size:.54rem}.caption-line{height:1px;background:var(--border);flex:1;max-width:30px}.eta-note{color:var(--fg-dim);font-size:.54rem;line-height:1.5;margin:.7rem 0 0}
- .logs-toggle{display:flex;align-items:center;gap:.5rem;background:var(--bg-card);color:var(--fg-dim);padding:.75rem 1rem;border:0;border-top:1px solid var(--border);width:100%;text-align:left;cursor:pointer;font-size:.66rem}.logs-toggle:hover{background:var(--bg-card-2);color:var(--fg)}.logs-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}.line-count{margin-left:auto;font-size:.57rem;color:var(--fg-faint)}:global(.chevron){transition:transform .2s}:global(.chevron.open){transform:rotate(180deg)}
- .job-detail{padding:.6rem .8rem;margin:0;font-size:.62rem;line-height:1.6;color:var(--fg-dim)}.log-legend{display:flex;flex-wrap:wrap;gap:.7rem;padding:.45rem .8rem;background:var(--bg-card-2);font-size:.62rem}.log-body{padding:.6rem .8rem;max-height:12rem;overflow:auto;font-family:ui-monospace,'Cascadia Mono',monospace;font-size:.7rem;line-height:1.5;background:var(--bg-input);white-space:pre-wrap;overflow-wrap:anywhere}.log-line{padding:.2rem .4rem;border-left:2px solid currentColor;margin:.15rem 0;background:color-mix(in srgb,var(--fg) 2%,transparent)}.info{color:var(--fg-dim)}.compose{color:var(--accent)}.render{color:var(--accent-2)}.audio{color:var(--fg)}.success{color:var(--ok)}.warning{color:var(--fg)}.error{color:var(--error)}
+ .finish-label{position:absolute;bottom:0;left:50%;transform:translate(-50%,50%);white-space:nowrap;background:var(--bg-panel);padding:3px 9px;color:var(--fg-dim);font-size:.75rem;letter-spacing:.18em}.finished .finish-label{color:var(--accent)}
+ .readout{display:flex;flex-direction:column;align-items:center;gap:.3rem;min-height:49px}.percent{display:flex;align-items:center;gap:.3rem;font-size:1.55rem;line-height:1.25;font-weight:550;letter-spacing:-.06em;font-variant-numeric:tabular-nums}.percent-unit{font-size:.75rem;color:var(--fg-dim);letter-spacing:0;align-self:center}.finished .percent{color:var(--accent)}.waiting{font-size:.8rem;letter-spacing:0;font-weight:500}.estimate{font-size:.75rem;color:var(--fg-dim);font-variant-numeric:tabular-nums}
+ .record-caption{display:flex;align-items:center;gap:.55rem;justify-content:center;margin-top:1rem;color:var(--fg-dim);font-size:.75rem}.caption-line{height:1px;background:var(--border);flex:1;max-width:30px}.eta-note{color:var(--fg-dim);font-size:.75rem;line-height:1.5;margin:.7rem 0 0}
+ .logs-toggle{display:flex;align-items:center;gap:.5rem;background:var(--bg-card);color:var(--fg-dim);padding:.75rem 1rem;border:0;border-top:1px solid var(--border);width:100%;text-align:left;cursor:pointer;font-size:.75rem}.logs-toggle:hover{background:var(--bg-card-2);color:var(--fg)}.logs-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}.line-count{margin-left:auto;font-size:.75rem;color:var(--fg-faint)}:global(.chevron){transition:transform .2s}:global(.chevron.open){transform:rotate(180deg)}
+ .job-detail{padding:.6rem .8rem;margin:0;font-size:.75rem;line-height:1.6;color:var(--fg-dim)}.log-legend{display:flex;flex-wrap:wrap;gap:.7rem;padding:.45rem .8rem;background:var(--bg-card-2);font-size:.75rem}.log-body{padding:.6rem .8rem;max-height:12rem;overflow:auto;font-family:ui-monospace,'Cascadia Mono',monospace;font-size:.75rem;line-height:1.5;background:var(--bg-input);white-space:pre-wrap;overflow-wrap:anywhere}.log-line{padding:.2rem .4rem;border-left:2px solid currentColor;margin:.15rem 0;background:color-mix(in srgb,var(--fg) 2%,transparent)}.info{color:var(--fg-dim)}.compose{color:var(--accent)}.render{color:var(--accent-2)}.audio{color:var(--fg)}.success{color:var(--ok)}.warning{color:var(--fg)}.error{color:var(--error)}
  @keyframes record-turn{to{transform:rotate(360deg)}}
  @media(prefers-reduced-motion:reduce){.record-spin,.seeking{animation:none}.record-fill,.groove-progress{transition:none}:global(.chevron){transition:none}}
- @media(max-width:400px){.record-wrap{max-width:195px}.record-panel{padding:1rem .75rem}.card-header{padding:.75rem}.record-caption{font-size:.5rem}}
+ @media(max-width:400px){.record-wrap{max-width:195px}.record-panel{padding:1rem .75rem}.card-header{padding:.75rem}.record-caption{font-size:.75rem}}
 </style>

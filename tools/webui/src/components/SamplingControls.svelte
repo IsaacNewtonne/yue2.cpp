@@ -23,9 +23,9 @@
 <style>
  .sampling-controls {display:grid;grid-template-rows:repeat(4,1fr);grid-auto-flow:column;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 14px}
  .sampling-control {display:grid;grid-template-columns:minmax(65px,1fr) minmax(32px,.8fr) 48px;gap:7px;align-items:center;min-width:0}
- .sampling-control span {font-size:10px;white-space:nowrap;color:var(--fg-dim)}
+ .sampling-control span {font-size:12px;white-space:nowrap;color:var(--fg-dim)}
  .sampling-control input[type=range] {width:100%;min-width:0;accent-color:var(--accent);height:16px;cursor:pointer}
- .sampling-control input[type=number] {width:100%;padding:3px!important;font:10px ui-monospace,monospace!important;text-align:center;appearance:textfield;border-radius:6px!important}
+ .sampling-control input[type=number] {width:100%;padding:3px!important;font:12px ui-monospace,monospace!important;text-align:center;appearance:textfield;border-radius:6px!important}
  input::-webkit-inner-spin-button {appearance:none}
  .automatic input:disabled {opacity:.85;cursor:default}
  @media(max-width:1350px) and (min-width:1001px) {.sampling-controls {grid-template-columns:1fr;grid-auto-flow:row;grid-template-rows:none}}
