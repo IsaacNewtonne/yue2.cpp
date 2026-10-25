@@ -11,6 +11,7 @@
 
 #include "audio-io.h"
 #include "audio-master.h"
+#include "audio-polish.h"
 #include "audio-vocal-balance.h"
 #include "audio-video.h"
 #include "httplib.h"
@@ -454,6 +455,43 @@ static void wait_for_artwork(const std::shared_ptr<Job> & job) {
     }
 }
 
+// Frees the GPU memory a local Ollama model holds before a generation job:
+// every loaded model gets keep_alive 0, which unloads it at once. Ollama
+// reloads a model on its next request. Best effort with short timeouts; a
+// missing Ollama is not an error.
+static void release_ollama_models() {
+    httplib::Client client("127.0.0.1", 11434);
+    client.set_connection_timeout(1);
+    client.set_read_timeout(15);
+    auto response = client.Get("/api/ps");
+    if (!response || response->status != 200) return;
+    yyjson_doc * doc = yyjson_read(response->body.data(), response->body.size(), 0);
+    if (!doc) return;
+    std::vector<std::string> names;
+    yyjson_val * models = yyjson_obj_get(yyjson_doc_get_root(doc), "models");
+    size_t idx, max;
+    yyjson_val * model;
+    yyjson_arr_foreach(models, idx, max, model) {
+        yyjson_val * name = yyjson_obj_get(model, "model");
+        if (!name || !yyjson_is_str(name)) name = yyjson_obj_get(model, "name");
+        if (name && yyjson_is_str(name)) names.emplace_back(yyjson_get_str(name), yyjson_get_len(name));
+    }
+    yyjson_doc_free(doc);
+    for (const std::string & name : names) {
+        yyjson_mut_doc * body = yyjson_mut_doc_new(NULL);
+        yyjson_mut_val * root = yyjson_mut_obj(body);
+        yyjson_mut_doc_set_root(body, root);
+        yyjson_mut_obj_add_strncpy(body, root, "model", name.c_str(), name.size());
+        yyjson_mut_obj_add_int(body, root, "keep_alive", 0);
+        char * json = yyjson_mut_write(body, 0, NULL);
+        auto unload = client.Post("/api/generate", json ? json : "{}", "application/json");
+        if (json) free(json);
+        yyjson_mut_doc_free(body);
+        fprintf(stderr, "[Server] Ollama model %s unloaded before generation: %s\n", name.c_str(),
+                unload && unload->status == 200 ? "ok" : "no response");
+    }
+}
+
 static void work_push(std::shared_ptr<Job> job, std::function<void()> fn) {
     {
         std::lock_guard<std::mutex> lock(mtx_work);
@@ -597,6 +635,17 @@ static bool validate(const httplib::Request & req, httplib::Response & res, Yue2
         res.set_content(json_string("error", "mastering_profile must be off, streaming or broadcast"), "application/json");
         return false;
     }
+    if (r->vocal_polish != "off" && r->vocal_polish != "mix" && r->vocal_polish != "stems") {
+        res.status = 400;
+        res.set_content(json_string("error", "vocal_polish must be off, mix or stems"), "application/json");
+        return false;
+    }
+    if (r->score_retries < 0 || r->score_retries > 3 || !std::isfinite(r->duration_estimate) ||
+        r->duration_estimate < 0 || r->duration_estimate > 600) {
+        res.status = 400;
+        res.set_content(json_string("error", "score_retries must be 0 to 3 and duration_estimate 0 to 600 seconds"), "application/json");
+        return false;
+    }
     if (r->steps < 1 || r->steps > 200) {
         res.status = 400;
         res.set_content(json_string("error", "steps must be between 1 and 200"), "application/json");
@@ -661,6 +710,7 @@ static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
     fprintf(stderr, "[Server] Job %s: %s\n", job->id.c_str(), request_to_json(&request).c_str());
 
     std::vector<Yue2Song> songs;
+    release_ollama_models();
     g_pipeline.progress=[job](const char *stage,int done,int total) { std::lock_guard<std::mutex> lock(job->progress_mutex); if(job->stage!=stage)job->stage_start=std::chrono::steady_clock::now();job->stage=stage;job->stage_done=done;job->stage_total=total; };
     bool ok = pipeline_generate(&g_pipeline, request, &songs, server_cancel_job, (void *) &job->cancel);
     g_pipeline.progress={};
@@ -685,9 +735,24 @@ static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
     for (size_t t = 0; t < songs.size(); t++) {
         Yue2Song & song = songs[t];
         song_declick_end(song.audio.data(), song.T_audio, YUE2_SAMPLE_RATE);
-        const std::string & ending_warning = song.ending_warning;
-        if (request.mastering_profile != "off") {
-            std::vector<float> mastered;
+        std::string ending_warning = song.ending_warning;
+        const bool polish = request.vocal_polish != "off";
+        std::vector<float> mastered;
+        bool processed = false;
+        if (polish) {
+            // The polish chain expects a normalized level; the dry take gets the
+            // same normalization below, so doing it first changes nothing for it.
+            if (is_mp3 || wav_fmt != WAV_F32) audio_normalize(song.audio.data(), song.T_audio * 2, request.peak_clip);
+            std::string error, note;
+            processed = audio_polish_master(song.audio.data(), song.T_audio, YUE2_SAMPLE_RATE, request.vocal_polish,
+                                            request.mastering_profile, &mastered, &note, &error);
+            ending_warning += note;
+            if (!processed) {
+                // Polish is an enhancement: keep the dry take rather than lose the song.
+                fprintf(stderr, "[Polish] Job %s: %s; dry take kept\n", job->id.c_str(), error.c_str());
+                ending_warning += "Vocal polish failed (" + error + "); the unpolished take was kept. ";
+            }
+        } else if (request.mastering_profile != "off") {
             std::string error;
             if (!audio_master_ffmpeg(song.audio.data(), song.T_audio, YUE2_SAMPLE_RATE,
                                      request.mastering_profile, &mastered, &error)) {
@@ -696,6 +761,9 @@ static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
                 job_finish(job, JobStatus::FAILED);
                 return;
             }
+            processed = true;
+        }
+        if (processed) {
             // Keep the original take beside its master for in-app A/B preview.
             if (is_mp3 || wav_fmt != WAV_F32) {
                 audio_normalize(song.audio.data(), song.T_audio * 2, request.peak_clip);
@@ -711,6 +779,7 @@ static void run_job(std::shared_ptr<Job> job, Yue2Request request) {
             Yue2Request original = request_replay(request, song.score.empty() ? request.abc : song.score,
                                                   pipeline_format_tokens(song.tokens), (int) t / M, (int) t % M);
             original.mastering_profile = "off";
+            original.vocal_polish = "off";
             original.generation_warning = ending_warning;
             request_parts.push_back(request_to_json(&original));
             song.audio.swap(mastered);
