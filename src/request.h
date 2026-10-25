@@ -28,6 +28,16 @@ struct Yue2Request {
     // the model finish naturally, within the ten-minute/context safety limit.
     float duration;  // 360
 
+    // lyric-fit estimate in seconds from the client (tempo, delivery and
+    // phrasing aware). 0 lets the server estimate from the lyrics. Auto
+    // duration caps the performance at 1.2x the estimate plus 15 s.
+    float duration_estimate;  // 0
+
+    // pre-render score check: redraws of a score without its vocal melody or
+    // chorus, 0 to 3, and whether later choruses reuse the first chorus melody
+    int  score_retries;  // 2
+    bool chorus_lock;    // true
+
     // generation. Two seeds: the token draw consumes lm_seed as a Philox key,
     // the acoustic noise consumes seed as an mt19937 seed. Splitting them is
     // ours, the release runs both from one. Stored in int64_t to land positive
@@ -71,6 +81,10 @@ struct Yue2Request {
     // WAV outputs ignore this field.
     int mp3_bitrate;  // 128
     std::string mastering_profile;  // "off", "streaming" or "broadcast"
+    // vocal polish before mastering: "off", "mix" (EQ, de-ess and gentle
+    // compression on the whole mix) or "stems" (BS-RoFormer separation, the
+    // chain on the vocal stem only, then a remix)
+    std::string vocal_polish;  // "off"
     std::string generation_warning; // output-only: a stage could not finish
 };
 

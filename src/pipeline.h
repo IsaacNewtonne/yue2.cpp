@@ -20,6 +20,7 @@
 #include "model-store.h"
 #include "nar.h"
 #include "request.h"
+#include "score-check.h"
 #include "song-ending.h"
 #include "timer.h"
 #include "torch-cpu-rng.h"
@@ -263,6 +264,7 @@ static bool pipeline_generate(Yue2Pipeline *          p,
     std::vector<std::vector<int>> abc_ids(B);
     std::vector<std::string>      scores(B);
     std::vector<bool>             truncated(B, false);
+    std::vector<std::string>      score_warnings(B);
     bool                          has_score = cot != YUE2_COT_OFF;
     bool                          planned   = has_score && r.abc.empty();
 
@@ -298,6 +300,60 @@ static bool pipeline_generate(Yue2Pipeline *          p,
             abc_ids[i]   = plans[i].tokens;
             scores[i]    = bpe_decode(tok, abc_ids[i]);
             truncated[i] = plans[i].truncated;
+        }
+        // Pre-render quality gate: a score without its vocal melody or its
+        // chorus renders a vocal-free loop, so draw a new one before the long
+        // performance stage. The best attempt renders if every retry fails.
+        const LyricShape shape = score_lyric_shape(r.lyrics);
+        for (int i = 0; i < B; i++) {
+            ScoreReport report = score_inspect(scores[i]);
+            std::string why;
+            bool        ok   = score_acceptable(report, shape, truncated[i], &why);
+            int         best = score_quality(report, truncated[i]);
+            fprintf(stderr, "[Score] Song %d: %d sung bars, %d/%d sung choruses, %d lyric lines, %d lyric choruses: %s\n",
+                    i, report.vocal_bars, report.chorus_vocal_sections, report.chorus_sections, shape.lines,
+                    shape.choruses, ok ? "accepted" : why.c_str());
+            int attempt = 0;
+            for (attempt = 1; !ok && attempt <= r.score_retries; attempt++) {
+                if (cancelled && cancelled(cancel_data)) return false;
+                Yue2Sampling retry_sampling = score_sampling;
+                // A slightly stronger penalty discourages the one-bar rest loop.
+                retry_sampling.repetition_penalty = std::max(retry_sampling.repetition_penalty, 1.02f);
+                std::vector<Yue2Generation> retry;
+                if(p->progress) p->progress("Composing score",0,0);
+                if (!yue2_generate(lm, &p->kv, std::vector<std::vector<int>>(1, open), {}, 1.0f, retry_sampling,
+                                   r.lm_seed + i + 7919LL * attempt, YUE2_PHASE_ABC, &retry, cancelled, cancel_data,
+                                   [p](int done,int total){if(p->progress)p->progress("Composing score",done,total);})) {
+                    return false;
+                }
+                const std::string text = bpe_decode(tok, retry[0].tokens);
+                report = score_inspect(text);
+                ok = score_acceptable(report, shape, retry[0].truncated, &why);
+                const int quality = score_quality(report, retry[0].truncated);
+                fprintf(stderr, "[Score] Song %d retry %d/%d: %d sung bars, %d sung choruses: %s\n", i, attempt,
+                        r.score_retries, report.vocal_bars, report.chorus_vocal_sections, ok ? "accepted" : why.c_str());
+                if (ok || quality > best) {
+                    best         = quality;
+                    scores[i]    = text;
+                    abc_ids[i]   = retry[0].tokens;
+                    truncated[i] = retry[0].truncated;
+                }
+            }
+            if (!ok) {
+                score_warnings[i] = "Score check: " + why + (r.score_retries > 0 ? " after " + std::to_string(r.score_retries) +
+                                    " retr" + (r.score_retries == 1 ? "y" : "ies") : std::string()) +
+                                    "; vocals or the chorus may be missing. Shorter lyrics with standard [Verse]/[Chorus] labels help. ";
+            }
+            if (r.chorus_lock) {
+                int copied = 0;
+                const std::string locked = score_lock_choruses(scores[i], shape, &copied);
+                if (copied > 0) {
+                    scores[i]  = locked;
+                    abc_ids[i] = encode(locked);
+                    fprintf(stderr, "[Score] Song %d: chorus lock copied the first chorus melody into %d later chorus%s\n",
+                            i, copied, copied == 1 ? "" : "es");
+                }
+            }
         }
     }
 
@@ -337,8 +393,25 @@ static bool pipeline_generate(Yue2Pipeline *          p,
         int longest = 0;
         for (const auto & prefix : prefixes) longest = std::max(longest, (int) prefix.size());
         for (const auto & negative : negatives) longest = std::max(longest, (int) negative.size());
-        performance_limit = song_limit_reason(r.duration, semantic.max_tokens, p->kv.cfg.max_seq_len, longest);
-        semantic.max_tokens = song_frame_budget(r.duration, semantic.max_tokens, p->kv.cfg.max_seq_len, longest);
+        // Auto duration keeps the natural end token, under a lyric-fit
+        // ceiling of 1.2x the lyric estimate plus 15 s instead of ten minutes.
+        float ceiling = r.duration;
+        if (r.duration <= 0.0f) {
+            const float estimate = r.duration_estimate > 0.0f ? r.duration_estimate : score_estimate_seconds(r.lyrics);
+            if (estimate > 0.0f) {
+                ceiling = song_auto_ceiling(estimate);
+                fprintf(stderr, "[Pipeline] Auto duration: lyric estimate %.0f s, ceiling %.0f s\n", estimate, ceiling);
+            }
+        }
+        performance_limit = song_limit_reason(ceiling, semantic.max_tokens, p->kv.cfg.max_seq_len, longest);
+        if (r.duration <= 0.0f && ceiling > 0.0f) {
+            const std::string manual = "the selected duration limit";
+            const size_t at = performance_limit.find(manual);
+            if (at != std::string::npos)
+                performance_limit.replace(at, manual.size(), "Auto duration's lyric-fit ceiling (" +
+                                          std::to_string((int) ceiling) + " s)");
+        }
+        semantic.max_tokens = song_frame_budget(ceiling, semantic.max_tokens, p->kv.cfg.max_seq_len, longest);
         if (semantic.max_tokens < 1) {
             fprintf(stderr, "[Pipeline] FATAL: no context remains for the performance\n");
             return false;
@@ -379,7 +452,7 @@ static bool pipeline_generate(Yue2Pipeline *          p,
             song.score      = scores[i];
             song.T_lat      = T_lat;
             song.truncated  = truncated[i] || codes[i].truncated;
-            song.ending_warning = song_ending_warning(truncated[i], codes[i].truncated, performance_limit, r.duration <= 0.0f);
+            song.ending_warning = score_warnings[i] + song_ending_warning(truncated[i], codes[i].truncated, performance_limit, r.duration <= 0.0f);
             song.tokens.reserve(codes[i].tokens.size());
             for (size_t k = 0; k < codes[i].tokens.size(); k++) {
                 song.tokens.push_back(codes[i].tokens[k] - YUE2_CODEC_OFFSET);

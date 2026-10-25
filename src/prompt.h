@@ -11,6 +11,8 @@
 // style and the lyrics, so guidance pulls toward the requested text.
 #pragma once
 
+#include "score-check.h"
+
 #include <string>
 #include <vector>
 
@@ -136,29 +138,9 @@ static float yue2_default_guidance(Yue2Cot cot) {
     return cot == YUE2_COT_OFF ? 1.01f : 1.0f;
 }
 
-// Estimate song duration in seconds from lyrics text.
-// Heuristic: ~140 words/minute singing rate + 30s for intro/outro/instrumentals.
-// Returns 0 if lyrics are empty (caller should use default).
+// Estimate song duration in seconds from lyrics text: about 140 sung words a
+// minute plus 30 s for intro, breaks and outro, section labels excluded and
+// CJK syllables weighted. 0 if the lyrics carry no words (caller decides).
 static float yue2_estimate_duration_from_lyrics(const std::string & lyrics) {
-    if (lyrics.empty()) {
-        return 0.0f;
-    }
-    int words = 0;
-    bool in_word = false;
-    for (char c : lyrics) {
-        if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
-            in_word = false;
-        } else if (!in_word) {
-            in_word = true;
-            words++;
-        }
-    }
-    if (words == 0) {
-        return 0.0f;
-    }
-    float minutes = (float) words / 140.0f;
-    float seconds = minutes * 60.0f + 30.0f;
-    if (seconds < 30.0f) seconds = 30.0f;
-    if (seconds > 600.0f) seconds = 600.0f;
-    return seconds;
+    return score_estimate_seconds(lyrics);
 }

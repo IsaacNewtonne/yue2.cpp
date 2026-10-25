@@ -22,6 +22,9 @@ void request_init(Yue2Request * r) {
     r->cot    = "full";
 
     r->duration         = 360.0f;
+    r->duration_estimate = 0.0f;
+    r->score_retries    = 2;
+    r->chorus_lock      = true;
     r->lm_seed          = -1;
     r->seed             = -1;
     r->steps            = 32;
@@ -41,6 +44,7 @@ void request_init(Yue2Request * r) {
     r->output_format = OUTPUT_FORMAT_MP3;
     r->mp3_bitrate   = 320;
     r->mastering_profile = "off";
+    r->vocal_polish = "off";
     r->generation_warning = "";
 }
 
@@ -136,6 +140,15 @@ static void request_parse_obj(yyjson_val * obj, Yue2Request * r) {
     if ((v = yyjson_obj_get(obj, "duration")) && yyjson_is_num(v)) {
         r->duration = (float) yyjson_get_num(v);
     }
+    if ((v = yyjson_obj_get(obj, "duration_estimate")) && yyjson_is_num(v)) {
+        r->duration_estimate = (float) yyjson_get_num(v);
+    }
+    if ((v = yyjson_obj_get(obj, "score_retries")) && yyjson_is_int(v)) {
+        r->score_retries = yyjson_get_int(v);
+    }
+    if ((v = yyjson_obj_get(obj, "chorus_lock")) && yyjson_is_bool(v)) {
+        r->chorus_lock = yyjson_get_bool(v);
+    }
     if ((v = yyjson_obj_get(obj, "lm_seed")) && yyjson_is_int(v)) {
         r->lm_seed = yyjson_get_sint(v);
     }
@@ -170,6 +183,9 @@ static void request_parse_obj(yyjson_val * obj, Yue2Request * r) {
     }
     if ((v = yyjson_obj_get(obj, "mastering_profile")) && yyjson_is_str(v)) {
         r->mastering_profile = yy_str(v);
+    }
+    if ((v = yyjson_obj_get(obj, "vocal_polish")) && yyjson_is_str(v)) {
+        r->vocal_polish = yy_str(v);
     }
 }
 
@@ -233,6 +249,15 @@ std::string request_to_json(const Yue2Request * r, bool sparse) {
     if (!sparse || r->duration != d.duration) {
         yyjson_mut_obj_add_real(doc, root, "duration", r->duration);
     }
+    if (!sparse || r->duration_estimate != d.duration_estimate) {
+        yyjson_mut_obj_add_real(doc, root, "duration_estimate", r->duration_estimate);
+    }
+    if (!sparse || r->score_retries != d.score_retries) {
+        yyjson_mut_obj_add_int(doc, root, "score_retries", r->score_retries);
+    }
+    if (!sparse || r->chorus_lock != d.chorus_lock) {
+        yyjson_mut_obj_add_bool(doc, root, "chorus_lock", r->chorus_lock);
+    }
     if (!sparse || r->lm_seed != d.lm_seed) {
         yyjson_mut_obj_add_sint(doc, root, "lm_seed", r->lm_seed);
     }
@@ -267,6 +292,9 @@ std::string request_to_json(const Yue2Request * r, bool sparse) {
     }
     if (!sparse || r->mastering_profile != d.mastering_profile) {
         yyjson_mut_obj_add_strncpy(doc, root, "mastering_profile", r->mastering_profile.c_str(), r->mastering_profile.size());
+    }
+    if (!sparse || r->vocal_polish != d.vocal_polish) {
+        yyjson_mut_obj_add_strncpy(doc, root, "vocal_polish", r->vocal_polish.c_str(), r->vocal_polish.size());
     }
 
     if (!r->generation_warning.empty()) {

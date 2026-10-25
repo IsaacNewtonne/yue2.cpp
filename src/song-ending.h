@@ -27,6 +27,14 @@ static std::string song_ending_warning(bool score_cut, bool performance_cut, con
     return warning;
 }
 
+// Auto duration's ceiling for a lyric sheet: 1.2x the lyric estimate plus
+// 15 s of headroom for the ending, never above ten minutes. Without an
+// estimate (instrumental, no lyrics) the ten-minute ceiling stays.
+static float song_auto_ceiling(float estimate) {
+    if (!(estimate > 0.0f)) return 600.0f;
+    return std::min(600.0f, (float) std::ceil(estimate * 1.2 + 15.0 - 1e-4));
+}
+
 // Duration is a ceiling, not a target to fill. Auto lets the model emit its
 // natural end token, bounded by ten minutes, the caller's budget and context.
 static int song_frame_budget(float duration, int requested, int context, int prefix) {
