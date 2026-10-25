@@ -97,6 +97,35 @@ Transcribe score or Transcribe melody from the card menu: the score lands
 in the score field, pick the matching mode, add your lyrics and a style,
 and the model covers the song.
 
+## Quick start: YuE2 Studio launcher
+
+On Windows, `studio.ps1` prints a colour banner and a status check, starts
+the server if it is not already running, waits for the port, then opens the
+studio in your browser. Double-click `studio.cmd`, or run it from a terminal:
+
+```powershell
+.\studio.cmd                        # start if needed, open http://localhost:8087
+.\studio.ps1 -NoBrowser             # status and start only (or YUE2_NO_BROWSER=1)
+.\studio.ps1 -Port 8088 -Host 0.0.0.0
+```
+
+![YuE2 Studio launcher](docs/studio-banner.png)
+
+The status block shows the server state, URL, build in use, model files and,
+when available, free VRAM (`nvidia-smi`) and loaded Ollama models (Ollama
+models are unloaded before each song). The server exe is the one named in
+`server.cmd`, else the newest `build\*\yue-server.exe`. `server.cmd` is used
+when it matches the requested host and port; otherwise the exe is started
+directly with the models from `server.cmd` or the `models` folder. The script
+is plain ASCII and runs in Windows PowerShell 5.1 and PowerShell 7.
+`YUE2_COLOR=truecolor|basic` forces a colour mode.
+
+To get a `music` command in every terminal, add this to your `$PROFILE`:
+
+```powershell
+function music { & "C:\path\to\yue2.cpp\studio.ps1" @args }
+```
+
 ## Vocal level adjustment
 
 The song decoder produces a single stereo mix. The card menu can separate
