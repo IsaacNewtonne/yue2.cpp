@@ -27,6 +27,9 @@ Ported on the `studio-ports` branch, by upstream commit:
 https://github.com/timoncool/YuE2-Studio. `src/lyric-schedule.h` is a C++
 port of `crates/music-server/src/score/schedule.rs` (the lyric schedule
 builder) and `tests/test-lyric-schedule.cpp` reuses its test cases.
+`tools/webui/src/lib/harmony.ts` ports its lyric tag to section name
+mapping (`label_of`, `section_labels`); the web UI's structure and harmony
+hint texts follow its wording.
 
 ## Credits without copied code
 

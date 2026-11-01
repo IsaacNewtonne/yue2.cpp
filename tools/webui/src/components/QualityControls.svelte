@@ -5,6 +5,11 @@
 	let { compact = false }: { compact?: boolean } = $props();
 	const loud = $derived((app.request.mastering_profile || 'off') !== 'off');
 	function setLoud(on: boolean) { app.request.mastering_profile = on ? 'streaming' : 'off'; }
+	const structureSummary = $derived.by(() => {
+		const s = quality.structure;
+		const on = [s.followSections && 'follow sections', (s.chordVariety || s.sectionVariety || s.outsideKey) && 'harmony', s.lyricTiming && 'lyric timing', s.solver === 'ab2' && 'AB2'].filter(Boolean);
+		return on.length ? `On: ${on.join(', ')}` : 'Experimental, all off';
+	});
 </script>
 
 <div class="quality" class:compact role="group" aria-label="Voice and structure quality">
@@ -25,6 +30,22 @@
 			<select aria-label="Prompt format" bind:value={quality.promptMode} onchange={saveQuality}>
 				<option value="clean">Clean · recommended</option><option value="legacy">Legacy · A/B test</option>
 			</select></label>
+		<details class="q-structure"><summary><span><strong>Structure &amp; harmony</strong><small>{structureSummary}</small></span></summary>
+			<label class="q-row"><span><strong>Follow sections</strong><small>The score names exactly the sections of the lyrics, in their order, and ends only after the last one.</small></span>
+				<input type="checkbox" role="switch" aria-label="Follow sections" bind:checked={quality.structure.followSections} onchange={saveQuality} /></label>
+			<label class="q-row slider"><span><strong>Chord variety <output>{quality.structure.chordVariety ? quality.structure.chordVariety.toFixed(1) : 'Off'}</output></strong><small>Steers the score away from a chord that has filled the recent bars.</small></span>
+				<input type="range" min="0" max="16" step="0.5" aria-label="Chord variety" bind:value={quality.structure.chordVariety} onchange={saveQuality} /></label>
+			<label class="q-row slider"><span><strong>New opening per section <output>{quality.structure.sectionVariety ? quality.structure.sectionVariety.toFixed(1) : 'Off'}</output></strong><small>A section may not open with the chords the one before opened with.</small></span>
+				<input type="range" min="0" max="16" step="0.5" aria-label="New opening per section" bind:value={quality.structure.sectionVariety} onchange={saveQuality} /></label>
+			<label class="q-row slider"><span><strong>Outside key <output>{quality.structure.outsideKey ? quality.structure.outsideKey.toFixed(1) : 'Off'}</output></strong><small>Favours a change to a root outside the key until a quarter of the recent chords are outside.</small></span>
+				<input type="range" min="0" max="8" step="0.5" aria-label="Outside key" bind:value={quality.structure.outsideKey} onchange={saveQuality} /></label>
+			<label class="q-row"><span><strong>Lyric timing</strong><small>Each lyric section is sung only once the score reaches it. Needs guidance 1 (the default).</small></span>
+				<input type="checkbox" role="switch" aria-label="Lyric timing" bind:checked={quality.structure.lyricTiming} onchange={saveQuality} /></label>
+			<label class="q-row"><span><strong>Render solver</strong><small>{quality.structure.solver === 'ab2' ? 'Second-order steps: closer to a long render at the same step count.' : 'Midpoint, the engine default.'}</small></span>
+				<select aria-label="Render solver" bind:value={quality.structure.solver} onchange={saveQuality}>
+					<option value="midpoint">Midpoint · default</option><option value="ab2">AB2 · experimental</option>
+				</select></label>
+		</details>
 	{/if}
 </div>
 
@@ -36,5 +57,11 @@
 	strong { font-size: 13px; font-weight: 600; color: var(--fg); }
 	small { font-size: 12px; line-height: 1.45; color: var(--fg-dim); }
 	select { flex: 0 0 auto; max-width: 52%; min-height: 40px; }
+	.q-structure { border-bottom: 1px solid var(--border); }
+	.q-structure > summary { cursor: pointer; padding: 8px 0; list-style-position: inside; }
+	.q-structure > summary span { display: inline-grid; gap: 2px; }
+	.q-row.slider { flex-wrap: wrap; }
+	.q-row.slider input[type=range] { flex: 1 1 160px; max-width: 52%; accent-color: var(--accent); }
+	output { font-weight: 400; color: var(--fg-dim); margin-left: 6px; }
 	input[type=checkbox] { flex: none; width: 22px; height: 22px; accent-color: var(--accent); }
 </style>

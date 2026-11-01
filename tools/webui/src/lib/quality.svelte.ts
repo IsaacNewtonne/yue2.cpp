@@ -6,6 +6,7 @@
 // either off and the choice sticks.
 
 import { readPromptMode, writePromptMode, type PromptMode } from './prompt-clean.ts';
+import { cleanStructure, withStructure, STRUCTURE_DEFAULTS, type StructureSettings } from './harmony.ts';
 import type { Yue2Request } from './types.js';
 
 export type VocalPolish = 'off' | 'mix' | 'stems';
@@ -14,10 +15,11 @@ export interface QualitySettings {
 	scoreRetries: number;   // 0-3 score re-draws when vocals or choruses are missing
 	chorusLock: boolean;    // later choruses reuse the first chorus melody
 	promptMode: PromptMode; // clean tag line or the legacy prose prompt
+	structure: StructureSettings; // opt-in: follow sections, harmony, lyric timing, solver
 }
 
 const KEY = 'yue2-quality-v1';
-export const QUALITY_DEFAULTS: QualitySettings = { polish: 'mix', scoreRetries: 2, chorusLock: true, promptMode: 'clean' };
+export const QUALITY_DEFAULTS: QualitySettings = { polish: 'mix', scoreRetries: 2, chorusLock: true, promptMode: 'clean', structure: STRUCTURE_DEFAULTS };
 
 export function cleanQuality(value: unknown): QualitySettings {
 	const v = (value && typeof value === 'object' ? value : {}) as Partial<QualitySettings>;
@@ -25,7 +27,8 @@ export function cleanQuality(value: unknown): QualitySettings {
 		polish: v.polish === 'off' || v.polish === 'stems' ? v.polish : v.polish === 'mix' ? 'mix' : QUALITY_DEFAULTS.polish,
 		scoreRetries: Number.isInteger(v.scoreRetries) ? Math.max(0, Math.min(3, v.scoreRetries as number)) : QUALITY_DEFAULTS.scoreRetries,
 		chorusLock: typeof v.chorusLock === 'boolean' ? v.chorusLock : QUALITY_DEFAULTS.chorusLock,
-		promptMode: v.promptMode === 'legacy' ? 'legacy' : v.promptMode === 'clean' ? 'clean' : readPromptMode()
+		promptMode: v.promptMode === 'legacy' ? 'legacy' : v.promptMode === 'clean' ? 'clean' : readPromptMode(),
+		structure: cleanStructure(v.structure)
 	};
 }
 
@@ -54,5 +57,5 @@ export function withQuality(request: Yue2Request, settings: QualitySettings = qu
 	if (settings.polish !== 'off') out.vocal_polish = settings.polish; else delete out.vocal_polish;
 	if (settings.scoreRetries !== 2) out.score_retries = settings.scoreRetries; else delete out.score_retries;
 	if (!settings.chorusLock) out.chorus_lock = false; else delete out.chorus_lock;
-	return out;
+	return withStructure(out, settings.structure ?? STRUCTURE_DEFAULTS);
 }

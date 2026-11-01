@@ -40,6 +40,23 @@ export interface Yue2Request {
 	// vocal clarity chain: off, mix (EQ, de-ess, compression) or stems
 	vocal_polish?: string;
 	generation_warning?: string;
+	// opt-in engine fields (studio-ports): acoustic solver, harmony steering of
+	// the planned score, lyric sections revealed on the score clock
+	solver?: 'midpoint' | 'ab2';
+	harmony?: Yue2Harmony;
+	lyric_schedule?: 'auto' | boolean | Record<string, unknown>;
+}
+
+export interface Yue2Harmony {
+	identity?: 'root' | 'spelling';
+	strength?: number;
+	window?: number;
+	hold_limit?: number;
+	outside_bonus?: number;
+	outside_limit?: number;
+	section_strength?: number;
+	section_open?: number;
+	follow?: string[];
 }
 
 // GET /props response
