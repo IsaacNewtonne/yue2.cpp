@@ -28,6 +28,7 @@ void request_init(Yue2Request * r) {
     r->lm_seed          = -1;
     r->seed             = -1;
     r->steps            = 32;
+    r->solver           = "midpoint";
     r->lm_batch_size    = 1;
     r->synth_batch_size = 1;
     r->peak_clip        = 10;
@@ -172,6 +173,10 @@ static void request_parse_obj(yyjson_val * obj, Yue2Request * r) {
     if ((v = yyjson_obj_get(obj, "semantic_tokens")) && yyjson_is_str(v)) {
         r->semantic_tokens = yy_str(v);
     }
+    if ((v = yyjson_obj_get(obj, "solver")) && !yyjson_is_null(v)) {
+        // a non-string is kept as an invalid name so the pipeline refuses it
+        r->solver = yyjson_is_str(v) ? yy_str(v) : std::string("(not a string)");
+    }
     if ((v = yyjson_obj_get(obj, "cfg_scale")) && yyjson_is_num(v)) {
         r->cfg_scale = (float) yyjson_get_num(v);
     }
@@ -277,6 +282,9 @@ std::string request_to_json(const Yue2Request * r, bool sparse) {
     add_sampling(doc, root, "semantic_sampling", r->semantic_sampling, d.semantic_sampling, sparse);
     if (!sparse || r->semantic_tokens != d.semantic_tokens) {
         yyjson_mut_obj_add_strncpy(doc, root, "semantic_tokens", r->semantic_tokens.c_str(), r->semantic_tokens.size());
+    }
+    if (!sparse || r->solver != d.solver) {
+        yyjson_mut_obj_add_strncpy(doc, root, "solver", r->solver.c_str(), r->solver.size());
     }
     if (!sparse || r->cfg_scale != d.cfg_scale) {
         yyjson_mut_obj_add_real(doc, root, "cfg_scale", r->cfg_scale);

@@ -37,3 +37,8 @@ target_include_directories(test-draw PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_executable(test-sheetsage test-sheetsage.cpp)
 target_link_libraries(test-sheetsage PRIVATE yyjson)
 link_ggml_backends(test-sheetsage)
+
+# test-flow-solver: the flow matching steppers on analytic fields, pure CPU, no ggml.
+# Ported from timoncool/yue2.cpp (c8516db), MIT.
+add_executable(test-flow-solver test-flow-solver.cpp)
+target_include_directories(test-flow-solver PRIVATE ${CMAKE_SOURCE_DIR}/src)

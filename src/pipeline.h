@@ -256,6 +256,11 @@ static bool pipeline_generate(Yue2Pipeline *          p,
     if (!yue2_sampling_valid(r.abc_sampling, "abc") || !yue2_sampling_valid(r.semantic_sampling, "semantic")) {
         return false;
     }
+    Yue2Solver solver;
+    if (!yue2_solver_parse(r.solver, &solver)) {
+        fprintf(stderr, "[Pipeline] FATAL: solver must be \"midpoint\" or \"ab2\", not \"%s\"\n", r.solver.c_str());
+        return false;
+    }
 
     KvScope kv_scope = { p };
 
@@ -577,7 +582,8 @@ static bool pipeline_generate(Yue2Pipeline *          p,
                        span * sizeof(float));
             }
             if (!nar_solve(nar, &p->kv, block.data(), frames, M, ar_len, i, r.steps, dbg, cancelled, cancel_data,
-                           [p,start,chunk_size,chunks](int done,int total){if(p->progress)p->progress("Rendering audio chunks",(start/chunk_size)*total+done,chunks*total);})) {
+                           [p,start,chunk_size,chunks](int done,int total){if(p->progress)p->progress("Rendering audio chunks",(start/chunk_size)*total+done,chunks*total);},
+                           solver)) {
                 return false;
             }
             for (int j = 0; j < M; j++) {
