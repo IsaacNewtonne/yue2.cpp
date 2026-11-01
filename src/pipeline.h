@@ -21,6 +21,7 @@
 #include "nar.h"
 #include "request.h"
 #include "score-check.h"
+#include "score-sanity.h"
 #include "song-ending.h"
 #include "timer.h"
 #include "torch-cpu-rng.h"
@@ -328,6 +329,15 @@ static bool pipeline_generate(Yue2Pipeline *          p,
             std::string why;
             bool        ok   = score_acceptable(report, shape, truncated[i], &why);
             int         best = score_quality(report, truncated[i]);
+            // A plan nothing can be sung from (no M:/L:/K:, no voice with
+            // bars, colons in the note runs) is never accepted and ranks
+            // below every singable one (timoncool/yue2.cpp f429e9e).
+            std::string problem = yue2_score_problem(scores[i]);
+            if (!problem.empty()) {
+                ok   = false;
+                why  = "the score cannot be sung: " + problem;
+                best = -100000;
+            }
             fprintf(stderr, "[Score] Song %d: %d sung bars, %d/%d sung choruses, %d lyric lines, %d lyric choruses: %s\n",
                     i, report.vocal_bars, report.chorus_vocal_sections, report.chorus_sections, shape.lines,
                     shape.choruses, ok ? "accepted" : why.c_str());
@@ -347,7 +357,13 @@ static bool pipeline_generate(Yue2Pipeline *          p,
                 const std::string text = bpe_decode(tok, retry[0].tokens);
                 report = score_inspect(text);
                 ok = score_acceptable(report, shape, retry[0].truncated, &why);
-                const int quality = score_quality(report, retry[0].truncated);
+                int quality = score_quality(report, retry[0].truncated);
+                const std::string retry_problem = yue2_score_problem(text);
+                if (!retry_problem.empty()) {
+                    ok      = false;
+                    why     = "the score cannot be sung: " + retry_problem;
+                    quality = -100000;
+                }
                 fprintf(stderr, "[Score] Song %d retry %d/%d: %d sung bars, %d sung choruses: %s\n", i, attempt,
                         r.score_retries, report.vocal_bars, report.chorus_vocal_sections, ok ? "accepted" : why.c_str());
                 if (ok || quality > best) {
@@ -356,6 +372,16 @@ static bool pipeline_generate(Yue2Pipeline *          p,
                     abc_ids[i]   = retry[0].tokens;
                     truncated[i] = retry[0].truncated;
                 }
+            }
+            // Fail fast: an unsingable plan after every retry would spend
+            // minutes in the semantic stage on garbage.
+            problem = yue2_score_problem(scores[i]);
+            if (!problem.empty()) {
+                fprintf(stderr, "[Pipeline] score of song %d as written:\n%s\n", i + 1,
+                        yue2_score_excerpt(scores[i], 800).c_str());
+                fprintf(stderr, "[Pipeline] FATAL: the score the model wrote for song %d cannot be sung: %s. Draw another seed.\n",
+                        i + 1, problem.c_str());
+                return false;
             }
             if (!ok) {
                 score_warnings[i] = "Score check: " + why + (r.score_retries > 0 ? " after " + std::to_string(r.score_retries) +
@@ -431,6 +457,14 @@ static bool pipeline_generate(Yue2Pipeline *          p,
                                           std::to_string((int) ceiling) + " s)");
         }
         semantic.max_tokens = song_frame_budget(ceiling, semantic.max_tokens, p->context, longest);
+        // Say how much song the context leaves beside the prompt and score
+        // (after timoncool/yue2.cpp 7de5308, which refuses instead; this
+        // studio keeps clamping with a warning).
+        if (performance_limit.find("context") != std::string::npos) {
+            const int room = p->context - longest - 1;
+            fprintf(stderr, "[Pipeline] The prompt and the score take %d of the model's %d tokens, so a song can last %.0f s here\n",
+                    longest, p->context, room > 0 ? room / (double) YUE2_FRAME_RATE : 0.0);
+        }
         if (semantic.max_tokens < 1) {
             fprintf(stderr, "[Pipeline] FATAL: no context remains for the performance\n");
             return false;

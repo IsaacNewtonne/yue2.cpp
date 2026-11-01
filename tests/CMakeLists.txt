@@ -42,3 +42,8 @@ link_ggml_backends(test-sheetsage)
 # Ported from timoncool/yue2.cpp (c8516db), MIT.
 add_executable(test-flow-solver test-flow-solver.cpp)
 target_include_directories(test-flow-solver PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+# test-score-sanity: a planned score nothing can be sung from, pure CPU, no ggml.
+# Ported from timoncool/yue2.cpp (f429e9e), MIT.
+add_executable(test-score-sanity test-score-sanity.cpp)
+target_include_directories(test-score-sanity PRIVATE ${CMAKE_SOURCE_DIR}/src)
