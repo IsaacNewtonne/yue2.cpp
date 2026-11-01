@@ -26,6 +26,37 @@ struct Yue2Generation {
     bool             truncated;  // the budget ran out before the end token
 };
 
+// Prompt rows of lyric sections the semantic stage keeps out of sight until a
+// song reaches them (the C6 lyric schedule, see Yue2LyricSchedule). The prefill
+// is causal and unmasked, so later prompt rows still carry the hidden ones: a
+// timing control, not a guarantee.
+struct Yue2PromptMask {
+    std::vector<double>                      start_sec;  // per section, score order
+    std::vector<std::pair<int64_t, int64_t>> rows;       // per section, prompt rows [a, b)
+    float                                    bias      = -INFINITY;
+    double                                   lead_sec  = 0.0;
+    int                                      behind    = -1;
+    double                                   frame_sec = 0.04;
+};
+
+// The rows hidden while a song composes the frame at t seconds.
+static void yue2_mask_spans(const Yue2PromptMask & m, double t, std::vector<Qw3lmMaskSpan> * out) {
+    out->clear();
+    int64_t current = -1;
+    for (size_t k = 0; k < m.start_sec.size(); k++) {
+        if (m.start_sec[k] <= t) {
+            current = (int64_t) k;
+        }
+    }
+    for (size_t k = 0; k < m.start_sec.size(); k++) {
+        const bool future = m.start_sec[k] - m.lead_sec > t;
+        const bool stale  = m.behind >= 0 && (int64_t) k < current - m.behind;
+        if ((future || stale) && m.rows[k].second > m.rows[k].first) {
+            out->push_back({ m.rows[k].first, m.rows[k].second, m.bias });
+        }
+    }
+}
+
 // Prefill set s with a prefix, or copy the set of an equal prefix already
 // prefilled below it. The logits are the LM head rows [row0, row0 + rows).
 static void yue2_prefill(Qwen3LM *                             lm,
@@ -68,7 +99,8 @@ static bool yue2_generate(Qwen3LM *                             lm,
                           std::vector<Yue2Generation> *         out,
                           bool (*cancelled)(void *) = nullptr,
                           void * cancel_data        = nullptr,
-                          const std::function<void(int,int)> & progress = {}) {
+                          const std::function<void(int,int)> & progress = {},
+                          const std::vector<Yue2PromptMask> * masks = nullptr) {
     const int B       = (int) prefixes.size();
     const int context = kv->cfg.max_seq_len;
     bool      guided  = cfg_scale != 1.0f;
@@ -131,6 +163,7 @@ static bool yue2_generate(Qwen3LM *                             lm,
     for (;; step++) {
         if (cancelled && cancelled(cancel_data)) {
             fprintf(stderr, "[AR] Cancelled at step %d\n", step);
+            kv->prompt_bias.clear();
             return false;
         }
         bool pending = false;
@@ -174,6 +207,15 @@ static bool yue2_generate(Qwen3LM *                             lm,
             fprintf(stderr, "[AR] %s %d/%d\n", label, step, s.max_tokens);
             if (progress) progress(step, s.max_tokens);
         }
+        if (masks && !masks->empty()) {
+            // one schedule per song (this studio times each planned score);
+            // the unconditional sets under guidance keep the causal mask
+            kv->prompt_bias.assign((size_t) N, {});
+            for (int i = 0; i < B; i++) {
+                const Yue2PromptMask & mask = (*masks)[(size_t) i % masks->size()];
+                yue2_mask_spans(mask, (double) (*out)[i].tokens.size() * mask.frame_sec, &kv->prompt_bias[(size_t) i]);
+            }
+        }
         qw3lm_forward_batch(lm, kv, tokens.data(), kv_sets.data(), N, batched.data(), row0, rows);
         for (int i = 0; i < B; i++) {
             if (owed[i] > 0) {
@@ -182,6 +224,7 @@ static bool yue2_generate(Qwen3LM *                             lm,
         }
     }
 
+    kv->prompt_bias.clear();
     size_t total = 0;
     for (int i = 0; i < B; i++) {
         const Yue2Generation & g = (*out)[i];

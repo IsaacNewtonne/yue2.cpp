@@ -22,6 +22,7 @@
 #include "request.h"
 #include "score-check.h"
 #include "score-sanity.h"
+#include "lyric-schedule.h"
 #include "song-ending.h"
 #include "timer.h"
 #include "torch-cpu-rng.h"
@@ -239,6 +240,69 @@ struct KvScope {
 // track song * M + variation. Song i draws its tokens with lm_seed + i in
 // KV set i, variation j draws its noise with seed + j, and the M variations
 // of a song solve in one NAR graph over the set the AR left complete.
+// Byte offset of codepoint cp in UTF-8 text, or -1 past its end.
+// (lyric schedule, timoncool/yue2.cpp 21b3831, MIT)
+static int64_t pipeline_cp_to_byte(const std::string & text, int64_t cp) {
+    int64_t n = 0;
+    size_t  i = 0;
+    while (n < cp && i < text.size()) {
+        const unsigned char c = (unsigned char) text[i];
+        i += c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+        n++;
+    }
+    return n == cp && i <= text.size() ? (int64_t) i : -1;
+}
+
+// The prompt rows of every scheduled lyric section. The prompt opens with EOD,
+// then the request text, whose lyrics end one newline before its end; a token's
+// bytes come from decoding it alone, byte-level BPE making them add up to the text.
+static bool pipeline_lyric_mask(const BPETokenizer * tok, const Yue2Request & r, Yue2Cot cot,
+                                const std::vector<Yue2LyricSection> & sections, Yue2PromptMask * out) {
+    const Yue2LyricSchedule & sc   = r.lyric_schedule;
+    const std::string         text = yue2_request_text(cot, r.style, r.lyrics);
+    const std::vector<int>    ids  = bpe_encode(tok, text);
+    std::vector<int64_t>      ends(ids.size());
+    int64_t                   at = 0;
+    for (size_t k = 0; k < ids.size(); k++) {
+        at += (int64_t) bpe_decode(tok, { ids[k] }).size();
+        ends[k] = at;
+    }
+    if (at != (int64_t) text.size()) {
+        fprintf(stderr, "[Pipeline] FATAL: lyric_schedule: the prompt tokens do not add up to its text\n");
+        return false;
+    }
+    const int64_t lyrics_at = (int64_t) (text.size() - r.lyrics.size() - 1);
+    out->start_sec.clear();
+    out->rows.clear();
+    for (size_t s = 0; s < sections.size(); s++) {
+        const int64_t b0 = pipeline_cp_to_byte(r.lyrics, sections[s].lyric_c0);
+        const int64_t b1 = pipeline_cp_to_byte(r.lyrics, sections[s].lyric_c1);
+        if (b0 < 0 || b1 <= b0) {
+            fprintf(stderr, "[Pipeline] FATAL: lyric_schedule: section %zu lies outside the lyrics\n", s);
+            return false;
+        }
+        int64_t first = -1, last = -1, begin = 0;
+        for (size_t k = 0; k < ids.size(); k++) {
+            if (begin < lyrics_at + b1 && ends[k] > lyrics_at + b0) {
+                if (first < 0) {
+                    first = (int64_t) k;
+                }
+                last = (int64_t) k;
+            }
+            begin = ends[k];
+        }
+        out->start_sec.push_back(sections[s].start_sec);
+        out->rows.push_back(first < 0 ? std::make_pair<int64_t, int64_t>(1, 1) : std::make_pair(first + 1, last + 2));
+        fprintf(stderr, "[Pipeline] Lyric schedule: section %zu from %.2f s, prompt rows [%lld, %lld)\n", s,
+                sections[s].start_sec, (long long) out->rows.back().first, (long long) out->rows.back().second);
+    }
+    out->bias      = sc.bias;
+    out->lead_sec  = sc.lead_sec;
+    out->behind    = sc.behind;
+    out->frame_sec = 1.0 / (double) YUE2_FRAME_RATE;
+    return true;
+}
+
 static bool pipeline_generate(Yue2Pipeline *          p,
                               const Yue2Request &     r,
                               std::vector<Yue2Song> * songs,
@@ -255,6 +319,10 @@ static bool pipeline_generate(Yue2Pipeline *          p,
         return false;
     }
     if (!yue2_sampling_valid(r.abc_sampling, "abc") || !yue2_sampling_valid(r.semantic_sampling, "semantic")) {
+        return false;
+    }
+    if (!r.invalid.empty()) {
+        fprintf(stderr, "[Pipeline] FATAL: %s\n", r.invalid.c_str());
         return false;
     }
     Yue2Solver solver;
@@ -487,8 +555,34 @@ static bool pipeline_generate(Yue2Pipeline *          p,
             need              = std::max(need, std::max(semantic_need, acoustic_need));
         }
         pipeline_kv_capacity(p, need);
+        // Lyric schedule (opt-in): keep each section's words out of sight
+        // until the score reaches it. "auto" times every song's own score.
+        std::vector<Yue2PromptMask> lyric_masks;
+        if (r.lyric_schedule.on) {
+            const char * why = guidance != 1.0f ? "needs cfg_scale 1"
+                               : !has_score     ? "needs a score (cot melody or full)"
+                               : !r.lyric_schedule.automatic && r.abc.empty() ? "with explicit sections needs a supplied score"
+                                                                           : nullptr;
+            if (why) {
+                fprintf(stderr, "[Pipeline] FATAL: lyric_schedule %s\n", why);
+                return false;
+            }
+            for (int i = 0; i < (r.lyric_schedule.automatic ? B : 1); i++) {
+                std::vector<Yue2LyricSection> sections = r.lyric_schedule.sections;
+                if (r.lyric_schedule.automatic && !yue2_lyric_schedule_build(scores[i], r.lyrics, &sections)) {
+                    fprintf(stderr, "[Pipeline] Lyric schedule: nothing to time in song %d (no tagged sung block matches a score section); left off\n", i);
+                    sections.clear();
+                }
+                Yue2PromptMask mask;
+                if (!sections.empty() && !pipeline_lyric_mask(tok, r, cot, sections, &mask)) {
+                    return false;
+                }
+                lyric_masks.push_back(mask);
+            }
+        }
         if (!yue2_generate(lm, &p->kv, prefixes, negatives, guidance, semantic, r.lm_seed, YUE2_PHASE_SEMANTIC, &codes,
-                           cancelled, cancel_data, [p](int done,int total){if(p->progress)p->progress("Composing performance",done,total);})) {
+                           cancelled, cancel_data, [p](int done,int total){if(p->progress)p->progress("Composing performance",done,total);},
+                           lyric_masks.empty() ? nullptr : &lyric_masks)) {
             return false;
         }
     }

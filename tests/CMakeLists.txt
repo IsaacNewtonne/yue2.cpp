@@ -47,3 +47,8 @@ target_include_directories(test-flow-solver PRIVATE ${CMAKE_SOURCE_DIR}/src)
 # Ported from timoncool/yue2.cpp (f429e9e), MIT.
 add_executable(test-score-sanity test-score-sanity.cpp)
 target_include_directories(test-score-sanity PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+# test-lyric-schedule: the lyric schedule builder, pure CPU, no ggml.
+# Cases after timoncool/YuE2-Studio score/schedule.rs (MIT).
+add_executable(test-lyric-schedule test-lyric-schedule.cpp)
+target_include_directories(test-lyric-schedule PRIVATE ${CMAKE_SOURCE_DIR}/src)

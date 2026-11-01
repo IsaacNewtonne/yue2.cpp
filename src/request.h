@@ -7,8 +7,35 @@
 
 #include "sampling.h"
 
+#include <cmath>
 #include <cstdint>
 #include <string>
+#include <vector>
+
+// One sung section of the lyrics and the moment the score reaches it: its first
+// Vocal note on the score clock, and its codepoints in the request lyrics.
+struct Yue2LyricSection {
+    double  start_sec = 0.0;
+    int64_t lyric_c0  = 0;
+    int64_t lyric_c1  = 0;
+};
+
+// Lyric schedule tied to the score clock (HOT-Step's C6): while the semantic
+// stage composes the frame at t, a section whose first note lies more than
+// lead_sec after t is kept out of sight by an additive attention bias on its
+// prompt rows (-inf hides it outright). behind >= 0 also hides sections more
+// than that many before the current one.
+// "auto" (this studio): the engine builds the sections itself from the score
+// it renders, supplied or planned, and the request lyrics (the builder of
+// YuE2-Studio's score/schedule.rs, see lyric-schedule.h), one per song.
+struct Yue2LyricSchedule {
+    bool                          on       = false;
+    bool                          automatic = false;
+    float                         bias     = -INFINITY;
+    double                        lead_sec = 0.0;
+    int                           behind   = -1;
+    std::vector<Yue2LyricSection> sections;
+};
 
 struct Yue2Request {
     // text content
@@ -90,6 +117,15 @@ struct Yue2Request {
     // chain on the vocal stem only, then a remix)
     std::string vocal_polish;  // "off"
     std::string generation_warning; // output-only: a stage could not finish
+
+    // sections of the lyrics revealed as the score reaches them; needs a
+    // supplied score, one prompt for every song and no guidance
+    // (timoncool/yue2.cpp 21b3831, after HOT-Step-CPP C6)
+    Yue2LyricSchedule lyric_schedule;  // off
+
+    // input-only: the first malformed opt-in field the parser met ("" = none);
+    // the server answers 400 with it and the pipeline refuses the request
+    std::string invalid;  // ""
 };
 
 // fills every field with its default

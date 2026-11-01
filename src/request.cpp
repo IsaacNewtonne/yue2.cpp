@@ -5,6 +5,7 @@
 #include "task-types.h"
 #include "yyjson.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <random>
@@ -47,6 +48,8 @@ void request_init(Yue2Request * r) {
     r->mastering_profile = "off";
     r->vocal_polish = "off";
     r->generation_warning = "";
+    r->lyric_schedule = Yue2LyricSchedule();
+    r->invalid = "";
 }
 
 static inline std::string yy_str(yyjson_val * v) {
@@ -123,6 +126,103 @@ static void add_sampling(yyjson_mut_doc *     doc,
     }
 }
 
+// "lyric_schedule": {"mode": "bias"|"mask"|"auto", "bias": <0, "lead_sec"?: s,
+// "behind"?: n, "sections": [{"start_sec": s, "lyric": [c0, c1]}]} in score
+// order. Ported from timoncool/yue2.cpp 21b3831 (MIT); "auto" is this
+// studio's: the engine times the sections from the score it renders, bias -4
+// unless given. A string "auto" stands for {"mode": "auto"}.
+static bool request_parse_schedule(yyjson_val * ls, Yue2LyricSchedule * sc, std::string * error) {
+    auto fail = [error](const char * why) {
+        *error = std::string("lyric_schedule ") + why;
+        fprintf(stderr, "[Request] ERROR: %s\n", error->c_str());
+        return false;
+    };
+    if (yyjson_is_str(ls) && yy_str(ls) == "auto") {
+        sc->on        = true;
+        sc->automatic = true;
+        sc->bias      = -4.0f;
+        return true;
+    }
+    if (yyjson_is_bool(ls)) {
+        if (yyjson_get_bool(ls)) {
+            sc->on        = true;
+            sc->automatic = true;
+            sc->bias      = -4.0f;
+        }
+        return true;
+    }
+    if (!yyjson_is_obj(ls)) {
+        return fail("must be an object, \"auto\" or a boolean");
+    }
+    yyjson_val * mode     = yyjson_obj_get(ls, "mode");
+    yyjson_val * sections = yyjson_obj_get(ls, "sections");
+    if (!yyjson_is_str(mode) || (yy_str(mode) != "bias" && yy_str(mode) != "mask" && yy_str(mode) != "auto")) {
+        return fail("mode must be \"bias\", \"mask\" or \"auto\"");
+    }
+    const bool automatic = yy_str(mode) == "auto";
+    if (!automatic && (!yyjson_is_arr(sections) || yyjson_arr_size(sections) < 1 || yyjson_arr_size(sections) > 256)) {
+        return fail("sections must hold 1 to 256 entries");
+    }
+    yyjson_val * v;
+    if (yy_str(mode) == "bias") {
+        v = yyjson_obj_get(ls, "bias");
+        if (!yyjson_is_num(v) || !(yyjson_get_num(v) < 0.0 && yyjson_get_num(v) >= -60.0)) {
+            return fail("bias must be in [-60, 0) in bias mode");
+        }
+        sc->bias = (float) yyjson_get_num(v);
+    } else if (automatic) {
+        sc->bias = -4.0f;
+        v = yyjson_obj_get(ls, "bias");
+        if (v && !yyjson_is_null(v)) {
+            if (!yyjson_is_num(v) || !(yyjson_get_num(v) < 0.0 && yyjson_get_num(v) >= -60.0)) {
+                return fail("bias must be in [-60, 0)");
+            }
+            sc->bias = (float) yyjson_get_num(v);
+        }
+    }
+    if ((v = yyjson_obj_get(ls, "lead_sec")) && !yyjson_is_null(v)) {
+        if (!yyjson_is_num(v) || !(yyjson_get_num(v) >= 0.0 && yyjson_get_num(v) <= 30.0)) {
+            return fail("lead_sec must be in [0, 30]");
+        }
+        sc->lead_sec = yyjson_get_num(v);
+    }
+    if ((v = yyjson_obj_get(ls, "behind")) && !yyjson_is_null(v)) {
+        if (!yyjson_is_int(v) || yyjson_get_sint(v) < -1 || yyjson_get_sint(v) > 256) {
+            return fail("behind must be an integer in [-1, 256]");
+        }
+        sc->behind = (int) yyjson_get_sint(v);
+    }
+    if (automatic) {
+        sc->on        = true;
+        sc->automatic = true;
+        return true;
+    }
+    size_t       idx, max;
+    yyjson_val * e;
+    yyjson_arr_foreach(sections, idx, max, e) {
+        yyjson_val * start = yyjson_is_obj(e) ? yyjson_obj_get(e, "start_sec") : nullptr;
+        yyjson_val * lyric = yyjson_is_obj(e) ? yyjson_obj_get(e, "lyric") : nullptr;
+        if (!yyjson_is_num(start) || !std::isfinite(yyjson_get_num(start)) || yyjson_get_num(start) < 0.0 ||
+            !yyjson_is_arr(lyric) || yyjson_arr_size(lyric) != 2 || !yyjson_is_int(yyjson_arr_get(lyric, 0)) ||
+            !yyjson_is_int(yyjson_arr_get(lyric, 1))) {
+            return fail("sections need start_sec >= 0 and lyric [c0, c1]");
+        }
+        Yue2LyricSection section;
+        section.start_sec = yyjson_get_num(start);
+        section.lyric_c0  = yyjson_get_sint(yyjson_arr_get(lyric, 0));
+        section.lyric_c1  = yyjson_get_sint(yyjson_arr_get(lyric, 1));
+        if (section.lyric_c0 < 0 || section.lyric_c1 <= section.lyric_c0) {
+            return fail("a section's lyric span needs 0 <= c0 < c1");
+        }
+        if (!sc->sections.empty() && section.start_sec < sc->sections.back().start_sec) {
+            return fail("sections must be in score order");
+        }
+        sc->sections.push_back(section);
+    }
+    sc->on = true;
+    return true;
+}
+
 static void request_parse_obj(yyjson_val * obj, Yue2Request * r) {
     yyjson_val * v;
 
@@ -191,6 +291,15 @@ static void request_parse_obj(yyjson_val * obj, Yue2Request * r) {
     }
     if ((v = yyjson_obj_get(obj, "vocal_polish")) && yyjson_is_str(v)) {
         r->vocal_polish = yy_str(v);
+    }
+    if ((v = yyjson_obj_get(obj, "lyric_schedule")) && !yyjson_is_null(v)) {
+        Yue2LyricSchedule schedule;
+        std::string       error;
+        if (request_parse_schedule(v, &schedule, &error)) {
+            r->lyric_schedule = schedule;
+        } else if (r->invalid.empty()) {
+            r->invalid = error;
+        }
     }
 }
 
@@ -303,6 +412,36 @@ std::string request_to_json(const Yue2Request * r, bool sparse) {
     }
     if (!sparse || r->vocal_polish != d.vocal_polish) {
         yyjson_mut_obj_add_strncpy(doc, root, "vocal_polish", r->vocal_polish.c_str(), r->vocal_polish.size());
+    }
+
+    if (r->lyric_schedule.on) {
+        const Yue2LyricSchedule & sc = r->lyric_schedule;
+        yyjson_mut_val *          ls = yyjson_mut_obj(doc);
+        const bool masked = !std::isfinite(sc.bias);
+        yyjson_mut_obj_add_str(doc, ls, "mode", sc.automatic ? "auto" : masked ? "mask" : "bias");
+        if (!masked) {
+            yyjson_mut_obj_add_real(doc, ls, "bias", (double) sc.bias);
+        }
+        if (sc.lead_sec != 0.0) {
+            yyjson_mut_obj_add_real(doc, ls, "lead_sec", sc.lead_sec);
+        }
+        if (sc.behind != -1) {
+            yyjson_mut_obj_add_int(doc, ls, "behind", sc.behind);
+        }
+        if (!sc.automatic) {
+            yyjson_mut_val * arr = yyjson_mut_arr(doc);
+            for (const Yue2LyricSection & section : sc.sections) {
+                yyjson_mut_val * e = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_real(doc, e, "start_sec", section.start_sec);
+                yyjson_mut_val * span = yyjson_mut_arr(doc);
+                yyjson_mut_arr_add_sint(doc, span, section.lyric_c0);
+                yyjson_mut_arr_add_sint(doc, span, section.lyric_c1);
+                yyjson_mut_obj_add_val(doc, e, "lyric", span);
+                yyjson_mut_arr_append(arr, e);
+            }
+            yyjson_mut_obj_add_val(doc, ls, "sections", arr);
+        }
+        yyjson_mut_obj_add_val(doc, root, "lyric_schedule", ls);
     }
 
     if (!r->generation_warning.empty()) {

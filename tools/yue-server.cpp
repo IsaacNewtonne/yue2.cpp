@@ -682,6 +682,29 @@ static bool validate(const httplib::Request & req, httplib::Response & res, Yue2
         res.set_content(json_string("error", "sampling preset outside the protocol bounds"), "application/json");
         return false;
     }
+    if (!r->invalid.empty()) {
+        res.status = 400;
+        res.set_content(json_string("error", r->invalid.c_str()), "application/json");
+        return false;
+    }
+    if (r->solver != "midpoint" && r->solver != "ab2") {
+        res.status = 400;
+        res.set_content(json_string("error", "solver must be midpoint or ab2"), "application/json");
+        return false;
+    }
+    if (r->lyric_schedule.on) {
+        const float guidance = r->cfg_scale < 0.0f ? (r->cot == "off" ? 1.01f : 1.0f) : r->cfg_scale;
+        if (r->cot == "off" || guidance != 1.0f) {
+            res.status = 400;
+            res.set_content(json_string("error", "lyric_schedule needs a score (cot melody or full) and CFG 1"), "application/json");
+            return false;
+        }
+        if (!r->lyric_schedule.automatic && r->abc.empty()) {
+            res.status = 400;
+            res.set_content(json_string("error", "lyric_schedule with explicit sections needs a supplied score; use \"auto\""), "application/json");
+            return false;
+        }
+    }
     request_resolve_seed(r);
     return true;
 }
