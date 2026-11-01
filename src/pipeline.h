@@ -378,9 +378,23 @@ static bool pipeline_generate(Yue2Pipeline *          p,
         if (score_sampling.max_tokens < 1) return false;
         score_sampling.min_tokens = std::min(score_sampling.min_tokens, score_sampling.max_tokens - 1);
         pipeline_kv_capacity(p, (int) open.size() + score_sampling.max_tokens + 1);
+        // Harmony steering of the plan, opt-in (timoncool/yue2.cpp 1e21e63)
+        std::vector<std::string> texts;
+        Yue2HarmonyPlan          harmony;
+        if (r.harmony.active()) {
+            texts   = bpe_decode_each(tok, YUE2_EOD);
+            harmony = yue2_harmony_plan(r.harmony, &texts, YUE2_ABC_END);
+            fprintf(stderr,
+                    "[Harmony] %s strength=%.2f window=%d hold=%d outside=%.2f/%.2f section=%.2f/%d follow=%zu\n",
+                    r.harmony.by_root ? "root" : "spelling", (double) r.harmony.strength, r.harmony.window,
+                    r.harmony.hold_limit, (double) r.harmony.outside_bonus, (double) r.harmony.outside_limit,
+                    (double) r.harmony.section_strength, r.harmony.section_open, r.harmony.follow.size());
+        }
+        const Yue2HarmonyPlan * steer = r.harmony.active() ? &harmony : nullptr;
         if (!yue2_generate(lm, &p->kv, std::vector<std::vector<int>>(B, open), {}, 1.0f, score_sampling, r.lm_seed,
                            YUE2_PHASE_ABC, &plans, cancelled, cancel_data,
-                           [p](int done,int total){if(p->progress)p->progress("Composing score",done,total);})) {
+                           [p](int done,int total){if(p->progress)p->progress("Composing score",done,total);},
+                           nullptr, steer)) {
             return false;
         }
         for (int i = 0; i < B; i++) {
@@ -419,7 +433,8 @@ static bool pipeline_generate(Yue2Pipeline *          p,
                 if(p->progress) p->progress("Composing score",0,0);
                 if (!yue2_generate(lm, &p->kv, std::vector<std::vector<int>>(1, open), {}, 1.0f, retry_sampling,
                                    r.lm_seed + i + 7919LL * attempt, YUE2_PHASE_ABC, &retry, cancelled, cancel_data,
-                                   [p](int done,int total){if(p->progress)p->progress("Composing score",done,total);})) {
+                                   [p](int done,int total){if(p->progress)p->progress("Composing score",done,total);},
+                                   nullptr, steer)) {
                     return false;
                 }
                 const std::string text = bpe_decode(tok, retry[0].tokens);

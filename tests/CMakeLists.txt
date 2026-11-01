@@ -52,3 +52,13 @@ target_include_directories(test-score-sanity PRIVATE ${CMAKE_SOURCE_DIR}/src)
 # Cases after timoncool/YuE2-Studio score/schedule.rs (MIT).
 add_executable(test-lyric-schedule test-lyric-schedule.cpp)
 target_include_directories(test-lyric-schedule PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+# test-harmony: chord variety and section order of the planned score, pure CPU, no ggml.
+# Ported from timoncool/yue2.cpp (1e21e63), MIT.
+add_executable(test-harmony test-harmony.cpp)
+target_include_directories(test-harmony PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+# test-request-studio-ports: opt-in request fields from the studio-ports port, pure CPU.
+add_executable(test-request-studio-ports test-request-studio-ports.cpp ${CMAKE_SOURCE_DIR}/src/request.cpp)
+target_include_directories(test-request-studio-ports PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test-request-studio-ports PRIVATE yyjson)

@@ -5,6 +5,7 @@
 #include "task-types.h"
 #include "yyjson.h"
 
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -49,6 +50,7 @@ void request_init(Yue2Request * r) {
     r->vocal_polish = "off";
     r->generation_warning = "";
     r->lyric_schedule = Yue2LyricSchedule();
+    r->harmony        = Yue2Harmony();
     r->invalid = "";
 }
 
@@ -223,6 +225,74 @@ static bool request_parse_schedule(yyjson_val * ls, Yue2LyricSchedule * sc, std:
     return true;
 }
 
+// "harmony": see harmony.h. Ported from timoncool/yue2.cpp 1e21e63 (MIT).
+static bool request_parse_harmony(yyjson_val * node, Yue2Harmony * h, std::string * error) {
+    auto fail = [error](const char * why) {
+        *error = std::string("harmony ") + why;
+        fprintf(stderr, "[Request] ERROR: %s\n", error->c_str());
+        return false;
+    };
+    if (!yyjson_is_obj(node)) {
+        return fail("must be an object");
+    }
+    yyjson_val * v;
+    if ((v = yyjson_obj_get(node, "identity"))) {
+        if (!yyjson_is_str(v) || (yy_str(v) != "root" && yy_str(v) != "spelling")) {
+            return fail("identity must be \"root\" or \"spelling\"");
+        }
+        h->by_root = yy_str(v) == "root";
+    }
+    struct Num {
+        const char * key;
+        float *      out;
+    };
+    for (Num n : { Num{ "strength", &h->strength }, Num{ "outside_bonus", &h->outside_bonus },
+                   Num{ "outside_limit", &h->outside_limit }, Num{ "section_strength", &h->section_strength } }) {
+        if ((v = yyjson_obj_get(node, n.key))) {
+            if (!yyjson_is_num(v)) {
+                return fail("numbers must be numbers");
+            }
+            *n.out = (float) yyjson_get_num(v);
+        }
+    }
+    struct Int {
+        const char * key;
+        int *        out;
+    };
+    for (Int n : { Int{ "window", &h->window }, Int{ "hold_limit", &h->hold_limit },
+                   Int{ "section_open", &h->section_open } }) {
+        if ((v = yyjson_obj_get(node, n.key))) {
+            if (!yyjson_is_int(v)) {
+                return fail("counts must be integers");
+            }
+            *n.out = (int) yyjson_get_int(v);
+        }
+    }
+    if ((v = yyjson_obj_get(node, "follow"))) {
+        if (!yyjson_is_arr(v)) {
+            return fail("follow must be a list of section names");
+        }
+        h->follow.clear();
+        size_t       i, max;
+        yyjson_val * name;
+        yyjson_arr_foreach(v, i, max, name) {
+            if (!yyjson_is_str(name)) {
+                return fail("follow must be a list of section names");
+            }
+            std::string lower = yy_str(name);
+            for (char & c : lower) {
+                c = (char) std::tolower((unsigned char) c);
+            }
+            h->follow.push_back(lower);
+        }
+    }
+    if (!yue2_harmony_valid(*h)) {
+        return fail("is out of bounds: strength 0-64, window 1-512, hold_limit 0-64, outside_bonus 0-20, "
+                    "outside_limit 0-1, section_strength 0-64, section_open 1-16, up to 64 section names");
+    }
+    return true;
+}
+
 static void request_parse_obj(yyjson_val * obj, Yue2Request * r) {
     yyjson_val * v;
 
@@ -297,6 +367,15 @@ static void request_parse_obj(yyjson_val * obj, Yue2Request * r) {
         std::string       error;
         if (request_parse_schedule(v, &schedule, &error)) {
             r->lyric_schedule = schedule;
+        } else if (r->invalid.empty()) {
+            r->invalid = error;
+        }
+    }
+    if ((v = yyjson_obj_get(obj, "harmony")) && !yyjson_is_null(v)) {
+        Yue2Harmony harmony;
+        std::string error;
+        if (request_parse_harmony(v, &harmony, &error)) {
+            r->harmony = harmony;
         } else if (r->invalid.empty()) {
             r->invalid = error;
         }
@@ -442,6 +521,25 @@ std::string request_to_json(const Yue2Request * r, bool sparse) {
             yyjson_mut_obj_add_val(doc, ls, "sections", arr);
         }
         yyjson_mut_obj_add_val(doc, root, "lyric_schedule", ls);
+    }
+
+    if (!sparse || r->harmony.active()) {
+        const Yue2Harmony & h    = r->harmony;
+        yyjson_mut_val *    node = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_str(doc, node, "identity", h.by_root ? "root" : "spelling");
+        yyjson_mut_obj_add_real(doc, node, "strength", h.strength);
+        yyjson_mut_obj_add_int(doc, node, "window", h.window);
+        yyjson_mut_obj_add_int(doc, node, "hold_limit", h.hold_limit);
+        yyjson_mut_obj_add_real(doc, node, "outside_bonus", h.outside_bonus);
+        yyjson_mut_obj_add_real(doc, node, "outside_limit", h.outside_limit);
+        yyjson_mut_obj_add_real(doc, node, "section_strength", h.section_strength);
+        yyjson_mut_obj_add_int(doc, node, "section_open", h.section_open);
+        yyjson_mut_val * names = yyjson_mut_arr(doc);
+        for (const std::string & name : h.follow) {
+            yyjson_mut_arr_add_strncpy(doc, names, name.c_str(), name.size());
+        }
+        yyjson_mut_obj_add_val(doc, node, "follow", names);
+        yyjson_mut_obj_add_val(doc, root, "harmony", node);
     }
 
     if (!r->generation_warning.empty()) {

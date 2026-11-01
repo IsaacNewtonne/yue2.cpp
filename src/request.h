@@ -5,6 +5,7 @@
 // Only fields the pipeline consumes: the protocol constants (vocabulary
 // slices, sampling presets, frame rate) live in the pipeline, not here.
 
+#include "harmony.h"
 #include "sampling.h"
 
 #include <cmath>
@@ -122,6 +123,13 @@ struct Yue2Request {
     // supplied score, one prompt for every song and no guidance
     // (timoncool/yue2.cpp 21b3831, after HOT-Step-CPP C6)
     Yue2LyricSchedule lyric_schedule;  // off
+
+    // chord variety and section order of a planned score, see harmony.h;
+    // "harmony": {"identity": "root"|"spelling", "strength", "window",
+    // "hold_limit", "outside_bonus", "outside_limit", "section_strength",
+    // "section_open", "follow": ["intro", "verse", ...]}
+    // (timoncool/yue2.cpp 1e21e63, after Yeufonic)
+    Yue2Harmony harmony;  // off
 
     // input-only: the first malformed opt-in field the parser met ("" = none);
     // the server answers 400 with it and the pipeline refuses the request
