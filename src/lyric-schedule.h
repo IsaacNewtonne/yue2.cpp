@@ -6,8 +6,9 @@
 // same kind, matched in order, so the semantic stage keeps a section's words
 // out of sight until the score reaches them (lyric_schedule, generate.h).
 //
-// A C++ port of score/schedule.rs from timoncool/YuE2-Studio (MIT,
-// Copyright (c) 2026 timoncool), after HOT-Step-CPP's C6 lyric schedule (MIT).
+// A C++ port of crates/music-server/src/score/schedule.rs from
+// timoncool/YuE2-Studio (MIT, Copyright (c) 2025-2026 Ilya Timonin (Nerual
+// Dreming)), after HOT-Step-CPP's C6 lyric schedule. See THIRD_PARTY_NOTICES.md.
 // Its strict ABC dialect parser is replaced by a tolerant reader: every bar
 // lasts its meter (Z, Z2.. count whole bars), repeats are not unrolled, and
 // only the note runs before the first sung note of a section are measured.
